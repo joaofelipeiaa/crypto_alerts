@@ -177,10 +177,13 @@ def save_signal(symbol: str, candle_ts: str, candidate: dict | None, decision: d
 
 # ---------- gatilhos de preço ----------
 
-def set_trigger(symbol: str, price: float, up: float, down: float) -> dict | None:
-    """Salva os níveis da última análise (substitui os anteriores). Ignora níveis incoerentes."""
-    up = up if up and up > price else None
-    down = down if down and 0 < down < price else None
+def set_trigger(symbol: str, price: float, up: float, down: float, min_dist: float = 0) -> dict | None:
+    """Salva os níveis da última análise (substitui os anteriores).
+
+    Ignora níveis do lado errado do preço ou mais perto que min_dist (disparariam com ruído).
+    """
+    up = up if up and up >= price + min_dist else None
+    down = down if down and 0 < down <= price - min_dist else None
     with conn() as c:
         c.execute("DELETE FROM triggers WHERE symbol=?", (symbol,))
         if not up and not down:

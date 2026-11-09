@@ -62,7 +62,14 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     perfil = paper.get_profile()
     position = paper.open_position(symbol)
     snap = market.snapshot(df)
-    price = snap["preco"]
+    try:
+        # preço ao vivo: a vela atual ainda está aberta e pode ter andado bastante desde o fechamento
+        price = market.last_price(symbol)
+        snap["preco_agora"] = price
+        snap["variacao_desde_fechamento_pct"] = round((price / snap["preco"] - 1) * 100, 2)
+    except Exception as e:  # noqa: BLE001
+        log.warning("%s: sem preço ao vivo (%s), usando o fechamento", symbol, e)
+        price = snap["preco"]
     decision = agent.analyze(symbol, config.TIMEFRAME, snap, market.fear_greed(), candidate, position, perfil)
     if not decision:
         if source == "manual":
@@ -73,7 +80,9 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
 
     log.info("%s [%s]: IA decidiu %s (confiança %s, viés %+d)", symbol, source,
              decision["acao"], decision["confianca"], decision["vies"])
-    trigger = paper.set_trigger(symbol, price, decision["gatilho_alta"], decision["gatilho_baixa"])
+    # gatilho colado no preço dispara com ruído; exige distância mínima de meio ATR (e 0,5%)
+    min_dist = max(0.5 * snap["atr"], 0.005 * price)
+    trigger = paper.set_trigger(symbol, price, decision["gatilho_alta"], decision["gatilho_baixa"], min_dist)
 
     actionable = (source != "manual" and decision["acao"] in ("COMPRA", "VENDA")
                   and paper.confidence_ok(decision["confianca"]))

@@ -30,9 +30,14 @@ Regras gerais:
   risco/retorno de pelo menos 1,5. Para VENDA ou AGUARDAR use 0 nos dois campos.
 - vies: inteiro de -100 (forte inclinação de baixa) a +100 (forte inclinação de alta); perto de 0 = neutro.
   Seja coerente com os motivos: não dê vies neutro quando a análise aponta claramente para um lado.
+- dados_tecnicos.preco é o fechamento da última vela fechada; preco_agora é o preço ao vivo (a vela
+  atual ainda está aberta). Considere os dois: se o preço já andou desde o fechamento, leve isso em conta.
 - gatilho_alta: preço ACIMA do atual cujo rompimento confirmaria alta e justificaria reanalisar para
   compra (ex.: resistência). gatilho_baixa: preço ABAIXO do atual cuja perda pioraria o cenário (ex.:
-  suporte). Use níveis concretos dos dados; 0 se não houver nível relevante.
+  suporte). Use níveis concretos dos dados, a pelo menos ~1 ATR do preco_agora (níveis colados no preço
+  disparam com ruído e são ignorados); 0 se não houver nível relevante.
+- Se o sinal candidato veio de um gatilho rompido, diga explicitamente se o rompimento está se
+  confirmando (preco_agora vs. nível) ou se parece falso.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
 
