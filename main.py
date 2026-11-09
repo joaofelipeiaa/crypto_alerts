@@ -63,6 +63,11 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     position = paper.open_position(symbol)
     snap = market.snapshot(df)
     snap["tendencia_maior"] = market.higher_tf_context(symbol) or "indisponível"
+    if paper.get_dex(symbol):
+        try:
+            snap["token_de_dex"] = market.dex_context(symbol)
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s: sem dados de liquidez da DEX (%s)", symbol, e)
     try:
         # preço ao vivo: a vela atual ainda está aberta e pode ter andado bastante desde o fechamento
         price = market.last_price(symbol)
@@ -89,7 +94,8 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
                   and paper.confidence_ok(decision["confianca"]))
     alerted = source in ("manual", "gatilho") or actionable or config.SEND_REJECTED
     if alerted:
-        notifier.send(notifier.format_decision(symbol, price, decision, candidate, perfil, trigger),
+        notifier.send(notifier.format_decision(symbol, price, decision, candidate, perfil, trigger,
+                                               dex=bool(paper.get_dex(symbol))),
                       buttons=notifier.trade_button(symbol))
 
     if actionable and decision["acao"] == "COMPRA" and not position:
@@ -246,22 +252,45 @@ def cmd_add(args: list[str]) -> None:
     if not args:
         notifier.send("Uso: /adicionar XRP  (ou vários: /adicionar XRP DOGE ADA)")
         return
-    added, existing, invalid = [], [], []
+    added, existing, invalid, dex_lines = [], [], [], []
     for arg in args:
         symbol = resolve_symbol(arg)
         if symbol in paper.get_watchlist():
             existing.append(symbol)
-        elif not market.symbol_exists(symbol):
-            invalid.append(symbol)
-        elif len(paper.get_watchlist()) >= MAX_SYMBOLS:
+            continue
+        if len(paper.get_watchlist()) >= MAX_SYMBOLS:
             notifier.send(f"Limite de {MAX_SYMBOLS} moedas atingido. Remova alguma antes.")
             break
-        else:
+        if market.symbol_exists(symbol):
             paper.add_symbol(symbol)
             added.append(symbol)
+            continue
+        if not (config.DEX_ENABLED and symbol.endswith("/USD")):
+            invalid.append(symbol)
+            continue
+        try:
+            info, problem = market.find_dex(symbol.split("/")[0])
+        except Exception as e:  # noqa: BLE001
+            log.warning("Busca em DEX falhou para %s: %s", symbol, e)
+            info, problem = None, "não encontrado em DEX"
+        if not info:
+            invalid.append(symbol)
+        elif problem:
+            dex_lines.append(f"⛔ {esc(symbol)} ({esc(info['name'])}, {esc(info['network'])}): {esc(problem)}.")
+        else:
+            paper.add_dex(info)
+            paper.add_symbol(symbol)
+            dex_lines.append(
+                f"✅ Adicionado: {esc(symbol)}  ⚠️ <b>token de DEX</b>\n"
+                f"{esc(info['name'])} na rede {esc(info['network'])} · volume 24h US$ {info['volume']:,.0f} · "
+                f"valor de mercado US$ {info['market_cap']:,.0f}\n"
+                f"Contrato: <code>{esc(info['token'])}</code> (confira no app antes de comprar)\n"
+                f"Simulação com taxa de {config.DEX_FEE_PCT:.1f}% por lado. Moedas pequenas são mais "
+                f"fáceis de manipular: trate os sinais com mais desconfiança.")
     lines = []
     if added:
         lines.append("✅ Adicionado: " + esc(", ".join(added)))
+    lines += dex_lines
     if existing:
         lines.append("Já monitorado: " + esc(", ".join(existing)))
     if invalid:

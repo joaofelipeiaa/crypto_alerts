@@ -113,6 +113,17 @@ lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. M�
 
   Cada análise e trade simulado guarda o perfil usado: `/placar moderado` e `/desempenho` comparam os perfis.
 
+## Tokens de DEX
+
+Alguns tokens aparecem no app da Coinbase mas não na corretora (ex.: memecoins da Solana como ZCAT): o app
+compra por uma DEX. Para esses, o `/adicionar` busca o token no [GeckoTerminal](https://www.geckoterminal.com)
+(gratuito) e usa as velas da pool com mais volume. Travas:
+
+- só aceita tokens com volume de 24h acima de `DEX_MIN_VOLUME_USD` (padrão US$ 500 mil);
+- o paper trading usa `DEX_FEE_PCT` (padrão 2%) por lado, por causa da taxa do app e do slippage;
+- os alertas vêm marcados com ⚠️ DEX e a IA recebe volume, liquidez e valor de mercado para pesar o risco;
+- o bot mostra o endereço do contrato ao adicionar: confira no app que é o mesmo token.
+
 ## Usar em um grupo
 
 1. Crie o grupo no Telegram e adicione o bot como membro.

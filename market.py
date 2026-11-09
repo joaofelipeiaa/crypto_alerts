@@ -1,15 +1,119 @@
 """Dados de mercado (via ccxt) e indicadores técnicos."""
+import logging
+import time
+
 import ccxt
 import pandas as pd
 import requests
 
 import config
+import paper
+
+log = logging.getLogger(__name__)
 
 _exchange = getattr(ccxt, config.EXCHANGE)({"enableRateLimit": True})
 
 
+# ---------- tokens de DEX (GeckoTerminal, gratuito, ~30 chamadas/min) ----------
+
+GT_API = "https://api.geckoterminal.com/api/v2"
+_GT_NATIVE = {"1m": ("minute", 1), "5m": ("minute", 5), "15m": ("minute", 15),
+              "1h": ("hour", 1), "4h": ("hour", 4), "12h": ("hour", 12), "1d": ("day", 1)}
+_gt_last_call = 0.0
+
+
+def _gt(path: str, **params) -> dict:
+    global _gt_last_call
+    for attempt in range(3):
+        wait = 2.2 - (time.monotonic() - _gt_last_call)  # respeita o limite de ~30/min
+        if wait > 0:
+            time.sleep(wait)
+        _gt_last_call = time.monotonic()
+        r = requests.get(GT_API + path, params=params, timeout=20,
+                         headers={"Accept": "application/json;version=20230302"})
+        if r.status_code == 429:
+            time.sleep(15 * (attempt + 1))
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise RuntimeError("GeckoTerminal: limite de requisições")
+
+
+def find_dex(base: str) -> tuple[dict | None, str]:
+    """Procura um token pelo código nas DEX. Retorna (info, motivo_da_recusa)."""
+    base = base.upper()
+    d = _gt("/search/pools", query=base, include="base_token")
+    tokens = {t["id"]: t["attributes"] for t in d.get("included", [])}
+    by_token: dict[str, dict] = {}
+    for p in d.get("data", []):
+        tid = p["relationships"]["base_token"]["data"]["id"]
+        if tokens.get(tid, {}).get("symbol", "").upper() != base:
+            continue
+        vol = float(p["attributes"]["volume_usd"]["h24"] or 0)
+        entry = by_token.setdefault(tid, {"vol": 0.0, "pool": None, "pool_vol": -1.0})
+        entry["vol"] += vol
+        if vol > entry["pool_vol"]:
+            entry["pool"], entry["pool_vol"] = p["attributes"]["address"], vol
+    if not by_token:
+        return None, "não encontrado em DEX"
+    tid, best = max(by_token.items(), key=lambda kv: kv[1]["vol"])  # evita cópias com o mesmo código
+    network, token = tid.rsplit("_", 1)
+    attrs = _gt(f"/networks/{network}/tokens/{token}")["data"]["attributes"]
+    volume = float(attrs["volume_usd"]["h24"] or 0)
+    info = {"symbol": f"{base}/USD", "network": network, "token": token, "pool": best["pool"],
+            "name": attrs.get("name") or base, "volume": volume,
+            "market_cap": float(attrs.get("market_cap_usd") or attrs.get("fdv_usd") or 0)}
+    if volume < config.DEX_MIN_VOLUME_USD:
+        return info, (f"volume de 24h baixo demais (US$ {volume:,.0f}; mínimo US$ "
+                      f"{config.DEX_MIN_VOLUME_USD:,.0f}), fácil de manipular")
+    return info, ""
+
+
+def _dex_plan(timeframe: str) -> tuple[str, int]:
+    """Timeframe nativo do GeckoTerminal e quantas velas dele formam uma do timeframe pedido."""
+    if timeframe in _GT_NATIVE:
+        return timeframe, 1
+    secs = ccxt.Exchange.parse_timeframe(timeframe)
+    for tf in sorted(_GT_NATIVE, key=ccxt.Exchange.parse_timeframe, reverse=True):
+        base = ccxt.Exchange.parse_timeframe(tf)
+        if base <= secs and secs % base == 0:
+            return tf, secs // base
+    raise ValueError(f"timeframe {timeframe} sem equivalente no GeckoTerminal")
+
+
+def _dex_candles(dex: dict, timeframe: str, limit: int) -> pd.DataFrame:
+    base_tf, factor = _dex_plan(timeframe)
+    unit, agg = _GT_NATIVE[base_tf]
+    raw = _gt(f"/networks/{dex['network']}/pools/{dex['pool']}/ohlcv/{unit}", aggregate=agg,
+              limit=min(1000, (limit + 1) * factor), currency="usd", token=dex["token"])
+    rows = raw["data"]["attributes"]["ohlcv_list"]
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"]).sort_values("ts")
+    df["ts"] = pd.to_datetime(df["ts"], unit="s", utc=True)
+    df = df.drop_duplicates("ts").set_index("ts")
+    # intervalos sem negócio não vêm na resposta: preenche com o último preço e volume zero
+    base_secs = ccxt.Exchange.parse_timeframe(base_tf)
+    df = df.reindex(pd.date_range(df.index[0], df.index[-1], freq=f"{base_secs}s"))
+    df["close"] = df["close"].ffill()
+    for col in ("open", "high", "low"):
+        df[col] = df[col].fillna(df["close"])
+    df["volume"] = df["volume"].fillna(0)
+    tf_secs = ccxt.Exchange.parse_timeframe(timeframe)
+    if factor > 1:
+        df = df.resample(f"{tf_secs}s", origin="epoch", label="left", closed="left").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna()
+    df = df.rename_axis("ts").reset_index()
+    # só velas fechadas
+    df = df[df["ts"] + pd.Timedelta(seconds=tf_secs) <= pd.Timestamp.now(tz="UTC")]
+    return df.tail(limit).reset_index(drop=True)
+
+
+# ---------- dados de mercado (corretora ou DEX) ----------
+
 def fetch_candles(symbol: str, timeframe: str = config.TIMEFRAME, limit: int = 250) -> pd.DataFrame:
     """Busca velas e descarta a última (ainda aberta), usando só velas fechadas."""
+    dex = paper.get_dex(symbol)
+    if dex:
+        return _dex_candles(dex, timeframe, limit)
     raw = _exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
     df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "volume"])
     df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
@@ -25,6 +129,13 @@ def symbol_exists(symbol: str) -> bool:
 
 def price_at(symbol: str, ts_ms: int) -> float | None:
     """Preço (abertura da vela de 1h) no momento indicado. None se a corretora não tiver o dado."""
+    dex = paper.get_dex(symbol)
+    if dex:
+        raw = _gt(f"/networks/{dex['network']}/pools/{dex['pool']}/ohlcv/hour", aggregate=1, limit=3,
+                  before_timestamp=ts_ms // 1000 + 7200, currency="usd", token=dex["token"])
+        rows = raw["data"]["attributes"]["ohlcv_list"]
+        best = min(rows, key=lambda r: abs(r[0] * 1000 - ts_ms), default=None)
+        return float(best[1]) if best and abs(best[0] * 1000 - ts_ms) <= 2 * 3600 * 1000 else None
     candles = _exchange.fetch_ohlcv(symbol, "1h", since=ts_ms, limit=1)
     if candles and abs(candles[0][0] - ts_ms) <= 2 * 3600 * 1000:
         return float(candles[0][1])
@@ -32,7 +143,23 @@ def price_at(symbol: str, ts_ms: int) -> float | None:
 
 
 def last_price(symbol: str) -> float:
+    dex = paper.get_dex(symbol)
+    if dex:
+        data = _gt(f"/networks/{dex['network']}/tokens/{dex['token']}")["data"]["attributes"]
+        return float(data["price_usd"])
     return float(_exchange.fetch_ticker(symbol)["last"])
+
+
+def dex_context(symbol: str) -> dict | None:
+    """Liquidez e volume do token de DEX, para a IA pesar o risco."""
+    dex = paper.get_dex(symbol)
+    if not dex:
+        return None
+    a = _gt(f"/networks/{dex['network']}/tokens/{dex['token']}")["data"]["attributes"]
+    return {"rede": dex["network"], "nome": dex["name"],
+            "volume_24h_usd": round(float(a["volume_usd"]["h24"] or 0)),
+            "liquidez_usd": round(float(a.get("total_reserve_in_usd") or 0)),
+            "valor_de_mercado_usd": round(float(a.get("market_cap_usd") or a.get("fdv_usd") or 0))}
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:

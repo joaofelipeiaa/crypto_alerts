@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS dex_tokens (
+    symbol TEXT PRIMARY KEY,   -- ex.: ZCAT/USD
+    network TEXT NOT NULL,     -- ex.: solana
+    token TEXT NOT NULL,       -- endereço do contrato
+    pool TEXT NOT NULL,        -- pool com mais volume (fonte das velas)
+    name TEXT,
+    added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS triggers (
     symbol TEXT PRIMARY KEY,
     up REAL,
@@ -98,6 +106,26 @@ def conn() -> sqlite3.Connection:
             _migrate(c)
         _migrated = True
     return c
+
+
+# ---------- tokens de DEX ----------
+
+def add_dex(info: dict) -> None:
+    with conn() as c:
+        c.execute("INSERT OR REPLACE INTO dex_tokens (symbol, network, token, pool, name, added_at) "
+                  "VALUES (?,?,?,?,?,?)",
+                  (info["symbol"], info["network"], info["token"], info["pool"], info.get("name"), _now()))
+
+
+def get_dex(symbol: str) -> dict | None:
+    with conn() as c:
+        row = c.execute("SELECT * FROM dex_tokens WHERE symbol=?", (symbol,)).fetchone()
+    return dict(row) if row else None
+
+
+def fee_pct(symbol: str) -> float:
+    """Taxa por lado: tokens de DEX custam bem mais (taxa do app + slippage)."""
+    return config.DEX_FEE_PCT if get_dex(symbol) else config.PAPER_FEE_PCT
 
 
 # ---------- perfil de risco ----------
@@ -297,7 +325,7 @@ def open_trade(symbol: str, price: float, stop: float, alvo: float) -> dict:
 
 
 def close_trade(trade: dict, price: float, reason: str) -> dict:
-    fee = config.PAPER_FEE_PCT / 100
+    fee = fee_pct(trade["symbol"]) / 100
     cost = trade["entry"] * trade["qty"] * (1 + fee)
     proceeds = price * trade["qty"] * (1 - fee)
     pnl = proceeds - cost

@@ -40,6 +40,9 @@ Regras gerais:
   disparam com ruído e são ignorados); 0 se não houver nível relevante.
 - Se o sinal candidato veio de um gatilho rompido, diga explicitamente se o rompimento está se
   confirmando (preco_agora vs. nível) ou se parece falso.
+- Se houver dados_tecnicos.token_de_dex, é um token pequeno negociado em DEX: liquidez baixa, fácil de
+  manipular, risco de golpe e custo de ~{dex_fee}% por lado. Exija confirmação mais forte, cite esses
+  riscos e lembre que o alvo precisa cobrir as taxas. Desconfie de picos de volume isolados.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
 
@@ -83,7 +86,8 @@ def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
     }
     params = {
         "model": config.OPENAI_MODEL,
-        "instructions": SYSTEM_PROMPT.format(perfil=perfil, regras=PROFILES[perfil]["rules"]),
+        "instructions": SYSTEM_PROMPT.format(perfil=perfil, regras=PROFILES[perfil]["rules"],
+                                             dex_fee=config.DEX_FEE_PCT),
         "input": "Analise o ativo abaixo e dê sua decisão.\n\n"
                  + json.dumps(payload, ensure_ascii=False, indent=1),
         "text": {"format": {"type": "json_schema", "name": "decisao",

@@ -46,6 +46,11 @@ AUTO_TRIGGER_HOURS = int(_get("AUTO_TRIGGER_HOURS", "6"))  # recalcula a faixa a
 COOLDOWN_CANDLES = int(_get("COOLDOWN_CANDLES", "4"))  # velas sem reanalisar o mesmo ativo
 SEND_REJECTED = _get("SEND_REJECTED", "false").lower() == "true"  # avisar quando a IA descarta
 
+# Tokens de DEX (ex.: Solana), com velas do GeckoTerminal quando o par não existe na corretora
+DEX_ENABLED = _get("DEX_ENABLED", "true").lower() == "true"
+DEX_MIN_VOLUME_USD = float(_get("DEX_MIN_VOLUME_USD", "500000"))  # volume mínimo em 24h para aceitar
+DEX_FEE_PCT = float(_get("DEX_FEE_PCT", "2.0"))  # taxa + slippage por lado ao comprar pelo app
+
 # Paper trading (simulado, sem dinheiro real)
 PAPER_TRADE_USD = float(_get("PAPER_TRADE_USD", "100"))
 PAPER_FEE_PCT = float(_get("PAPER_FEE_PCT", "0.6"))  # taxa por lado (Coinbase taker ~0.6%)

@@ -123,10 +123,11 @@ def bias_label(v: int) -> str:
 
 
 def format_decision(symbol: str, price: float, decision: dict, candidate: dict | None,
-                    perfil: str | None = None, trigger: dict | None = None) -> str:
+                    perfil: str | None = None, trigger: dict | None = None, dex: bool = False) -> str:
     icon = {"COMPRA": "🟢", "VENDA": "🔴", "AGUARDAR": "⚪"}[decision["acao"]]
+    dex_tag = "  ·  ⚠️ DEX" if dex else ""
     lines = [
-        f"{icon} <b>{decision['acao']} {esc(symbol)}</b>  ·  confiança <b>{esc(decision['confianca'])}</b>",
+        f"{icon} <b>{decision['acao']} {esc(symbol)}</b>  ·  confiança <b>{esc(decision['confianca'])}</b>{dex_tag}",
         f"Preço: <code>{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}",
         f"Viés: <b>{bias_label(decision.get('vies', 0))}</b>",
         "",
