@@ -17,7 +17,9 @@ def _get(name: str, default: str | None = None, required: bool = False) -> str:
 
 # Telegram
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN", required=True)
-TELEGRAM_CHAT_ID = _get("TELEGRAM_CHAT_ID", required=True)
+TELEGRAM_CHAT_ID = _get("TELEGRAM_CHAT_ID", required=True)  # chat privado ou grupo (grupo começa com -)
+# IDs de usuário que podem usar /analise, /adicionar e /remover. Vazio = todos do chat.
+TELEGRAM_ADMIN_IDS = {s.strip() for s in _get("TELEGRAM_ADMIN_IDS", "").split(",") if s.strip()}
 
 # OpenAI (a chave é lida automaticamente pelo SDK via OPENAI_API_KEY)
 _get("OPENAI_API_KEY", required=True)

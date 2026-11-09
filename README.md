@@ -89,6 +89,18 @@ O bot só responde ao `TELEGRAM_CHAT_ID` configurado.
 A lista de moedas fica salva no banco (`crypto_alerts.db`). O `SYMBOLS` do `.env` só define a
 lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. Máximo de 30 moedas.
 
+## Usar em um grupo
+
+1. Crie o grupo no Telegram e adicione o bot como membro.
+2. No grupo, mande `/id`. O bot responde com o ID do grupo (começa com `-`) e com o seu ID de usuário.
+3. No `.env`: `TELEGRAM_CHAT_ID=<ID do grupo>` e `TELEGRAM_ADMIN_IDS=<seu ID>`.
+4. Reinicie: `systemctl --user restart crypto-alerts`.
+5. No @BotFather, use `/setjoingroups` → **Disable** para ninguém adicionar o bot em outros grupos.
+
+Todos do grupo recebem os alertas e podem usar `/status`, `/desempenho` e `/moedas`. Só os IDs em
+`TELEGRAM_ADMIN_IDS` podem usar `/analise` (que gasta créditos da OpenAI), `/adicionar` e `/remover`.
+Se o grupo virar supergrupo, o ID muda: o novo aparece nos logs e no `/id`.
+
 ## Configuração
 
 Todas as opções ficam no `.env` (veja os comentários em [`.env.example`](.env.example)): ativos,

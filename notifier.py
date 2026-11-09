@@ -11,10 +11,11 @@ log = logging.getLogger(__name__)
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 
 
-def send(text: str) -> None:
+def send(text: str, chat_id: str | int | None = None) -> None:
+    chat_id = chat_id or config.TELEGRAM_CHAT_ID
     try:
         r = requests.post(f"{API}/sendMessage", timeout=15, data={
-            "chat_id": config.TELEGRAM_CHAT_ID,
+            "chat_id": chat_id,
             "text": text[:4000],
             "parse_mode": "HTML",
             "disable_web_page_preview": "true",
@@ -23,7 +24,7 @@ def send(text: str) -> None:
             # HTML inválido (ex.: mensagem cortada no meio de uma tag): reenvia como texto puro
             plain = html.unescape(re.sub(r"<[^>]+>", "", text))[:4000]
             r = requests.post(f"{API}/sendMessage", timeout=15, data={
-                "chat_id": config.TELEGRAM_CHAT_ID, "text": plain, "disable_web_page_preview": "true",
+                "chat_id": chat_id, "text": plain, "disable_web_page_preview": "true",
             })
         if not r.ok:
             log.error("Falha ao enviar Telegram: %s", r.text[:300])

@@ -105,10 +105,11 @@ HELP = (
     "<b>Comandos</b>\n"
     "/status — posições simuladas abertas\n"
     "/desempenho — resultado do paper trading\n"
-    "/analise BTC — análise da IA agora (não abre operação)\n"
+    "🔒 /analise BTC — análise da IA agora (não abre operação)\n"
     "/moedas — ativos monitorados\n"
-    "/adicionar XRP DOGE — passa a monitorar (pode mais de uma)\n"
-    "/remover XRP — para de monitorar"
+    "🔒 /adicionar XRP DOGE — passa a monitorar (pode mais de uma)\n"
+    "🔒 /remover XRP — para de monitorar\n"
+    "/id — mostra o ID do chat e o seu\n\n🔒 = só administradores"
 )
 
 MAX_SYMBOLS = 30  # limite para não estourar o rate limit da corretora
@@ -169,9 +170,20 @@ def cmd_remove(args: list[str]) -> None:
             notifier.send(f"{esc(symbol)} não estava na lista. Veja /moedas")
 
 
-def handle_command(text: str) -> None:
+ADMIN_COMMANDS = {"/analise", "/adicionar", "/remover"}
+
+
+def is_admin(user_id) -> bool:
+    return not config.TELEGRAM_ADMIN_IDS or str(user_id) in config.TELEGRAM_ADMIN_IDS
+
+
+def handle_command(text: str, user_id=None) -> None:
     parts = text.strip().split()
     cmd = parts[0].split("@")[0].lower()
+
+    if cmd in ADMIN_COMMANDS and not is_admin(user_id):
+        notifier.send("🔒 Apenas administradores podem usar esse comando.")
+        return
 
     if cmd in ("/start", "/ajuda", "/help"):
         notifier.send(HELP)
@@ -243,12 +255,22 @@ def poll_commands(offset: int | None, until: datetime) -> int | None:
         for upd in notifier.get_updates(offset, timeout=max(1, min(30, remaining))):
             offset = upd["update_id"] + 1
             msg = upd.get("message") or {}
-            # Só obedece ao seu próprio chat
-            if str(msg.get("chat", {}).get("id")) != str(config.TELEGRAM_CHAT_ID):
+            text = msg.get("text", "")
+            chat_id = msg.get("chat", {}).get("id")
+            user_id = msg.get("from", {}).get("id")
+            # /id funciona em qualquer chat, para descobrir o ID de um grupo novo
+            if text.split("@")[0].strip().lower() == "/id":
+                notifier.send(f"ID deste chat: <code>{chat_id}</code>\nSeu ID de usuário: <code>{user_id}</code>",
+                              chat_id=chat_id)
                 continue
-            if msg.get("text", "").startswith("/"):
+            if msg.get("migrate_to_chat_id"):
+                log.warning("O grupo virou supergrupo. Novo TELEGRAM_CHAT_ID: %s", msg["migrate_to_chat_id"])
+            # Fora isso, só obedece ao chat configurado
+            if str(chat_id) != str(config.TELEGRAM_CHAT_ID):
+                continue
+            if text.startswith("/"):
                 try:
-                    handle_command(msg["text"])
+                    handle_command(text, user_id)
                 except Exception:
                     log.exception("Erro no comando %s", msg.get("text"))
                     notifier.send("Erro ao executar o comando. Veja os logs.")
