@@ -90,7 +90,7 @@ def run_symbol(symbol: str) -> None:
 
 
 def run_cycle() -> None:
-    for symbol in config.SYMBOLS:
+    for symbol in paper.get_watchlist():
         try:
             run_symbol(symbol)
         except ccxt.BaseError as e:
@@ -106,18 +106,67 @@ HELP = (
     "/status — posições simuladas abertas\n"
     "/desempenho — resultado do paper trading\n"
     "/analise BTC — análise da IA agora (não abre operação)\n"
-    "/moedas — ativos monitorados"
+    "/moedas — ativos monitorados\n"
+    "/adicionar XRP DOGE — passa a monitorar (pode mais de uma)\n"
+    "/remover XRP — para de monitorar"
 )
+
+MAX_SYMBOLS = 30  # limite para não estourar o rate limit da corretora
 
 
 def resolve_symbol(arg: str) -> str:
-    arg = arg.upper()
+    """'btc' -> 'BTC/USD' (ou o par já monitorado com essa moeda, ex.: BTC/USDC)."""
+    arg = arg.upper().replace("-", "/")
     if "/" in arg:
         return arg
-    for s in config.SYMBOLS:
+    for s in paper.get_watchlist():
         if s.split("/")[0] == arg:
             return s
     return f"{arg}/USD"
+
+
+def cmd_add(args: list[str]) -> None:
+    if not args:
+        notifier.send("Uso: /adicionar XRP  (ou vários: /adicionar XRP DOGE ADA)")
+        return
+    added, existing, invalid = [], [], []
+    for arg in args:
+        symbol = resolve_symbol(arg)
+        if symbol in paper.get_watchlist():
+            existing.append(symbol)
+        elif not market.symbol_exists(symbol):
+            invalid.append(symbol)
+        elif len(paper.get_watchlist()) >= MAX_SYMBOLS:
+            notifier.send(f"Limite de {MAX_SYMBOLS} moedas atingido. Remova alguma antes.")
+            break
+        else:
+            paper.add_symbol(symbol)
+            added.append(symbol)
+    lines = []
+    if added:
+        lines.append("✅ Adicionado: " + esc(", ".join(added)))
+    if existing:
+        lines.append("Já monitorado: " + esc(", ".join(existing)))
+    if invalid:
+        lines.append(f"❌ Não encontrado na {esc(config.EXCHANGE)}: " + esc(", ".join(invalid))
+                     + "\nConfira o código da moeda ou tente outro par, ex.: /adicionar XRP/USDC")
+    if lines:
+        notifier.send("\n".join(lines))
+
+
+def cmd_remove(args: list[str]) -> None:
+    if not args:
+        notifier.send("Uso: /remover XRP")
+        return
+    for arg in args:
+        symbol = resolve_symbol(arg)
+        if paper.open_position(symbol):
+            notifier.send(f"⚠️ {esc(symbol)} tem uma posição simulada aberta. Ela será encerrada "
+                          "quando bater stop/alvo; remova depois disso.")
+        elif paper.remove_symbol(symbol):
+            notifier.send(f"🗑️ Removido: {esc(symbol)}")
+        else:
+            notifier.send(f"{esc(symbol)} não estava na lista. Veja /moedas")
 
 
 def handle_command(text: str) -> None:
@@ -128,8 +177,16 @@ def handle_command(text: str) -> None:
         notifier.send(HELP)
 
     elif cmd == "/moedas":
-        notifier.send(f"Monitorando ({esc(config.EXCHANGE)}, {esc(config.TIMEFRAME)}): "
-                      + esc(", ".join(config.SYMBOLS)))
+        symbols = paper.get_watchlist()
+        notifier.send(f"<b>Monitorando {len(symbols)} moedas</b> ({esc(config.EXCHANGE)}, "
+                      f"{esc(config.TIMEFRAME)}):\n" + esc(", ".join(symbols) or "nenhuma")
+                      + "\n\n/adicionar XRP · /remover XRP")
+
+    elif cmd == "/adicionar":
+        cmd_add(parts[1:])
+
+    elif cmd == "/remover":
+        cmd_remove(parts[1:])
 
     elif cmd == "/status":
         trades = paper.all_open()
@@ -199,9 +256,10 @@ def poll_commands(offset: int | None, until: datetime) -> int | None:
 
 
 def main() -> None:
+    symbols = paper.get_watchlist()
     log.info("Iniciando: %s %s %s, a cada %d min",
-             config.EXCHANGE, config.TIMEFRAME, config.SYMBOLS, config.CHECK_INTERVAL_MIN)
-    notifier.send(f"🤖 Monitor de cripto iniciado\n{esc(', '.join(config.SYMBOLS))} · {esc(config.TIMEFRAME)}\n"
+             config.EXCHANGE, config.TIMEFRAME, symbols, config.CHECK_INTERVAL_MIN)
+    notifier.send(f"🤖 Monitor de cripto iniciado\n{esc(', '.join(symbols))} · {esc(config.TIMEFRAME)}\n"
                   "Envie /ajuda para ver os comandos.")
     offset = None
     for upd in notifier.get_updates(None, timeout=0):  # ignora comandos antigos

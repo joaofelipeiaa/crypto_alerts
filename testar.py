@@ -6,12 +6,13 @@
 import sys
 
 import config
+import paper
 import market
 import notifier
 import triage
 
 print(f"1) Buscando velas na {config.EXCHANGE}...")
-for symbol in config.SYMBOLS:
+for symbol in paper.get_watchlist():
     df = market.add_indicators(market.fetch_candles(symbol))
     last = df.iloc[-1]
     cand = triage.find_candidate(df)
@@ -26,7 +27,7 @@ print("   Confira seu Telegram.")
 
 if "--ia" in sys.argv:
     import agent
-    symbol = config.SYMBOLS[0]
+    symbol = paper.get_watchlist()[0]
     print(f"4) Pedindo análise da IA para {symbol} (pode levar até 1 minuto)...")
     df = market.add_indicators(market.fetch_candles(symbol))
     snap = market.snapshot(df)

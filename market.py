@@ -16,6 +16,13 @@ def fetch_candles(symbol: str, timeframe: str = config.TIMEFRAME, limit: int = 2
     return df.iloc[:-1].reset_index(drop=True)
 
 
+def symbol_exists(symbol: str) -> bool:
+    """Confere se o par existe e está ativo na corretora."""
+    markets = _exchange.load_markets()  # o ccxt guarda em cache após a primeira chamada
+    m = markets.get(symbol)
+    return bool(m) and m.get("active") is not False
+
+
 def last_price(symbol: str) -> float:
     return float(_exchange.fetch_ticker(symbol)["last"])
 

@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl_usd REAL,
     pnl_pct REAL
 );
+CREATE TABLE IF NOT EXISTS watchlist (
+    symbol TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 CONF_ORDER = {"baixa": 0, "media": 1, "alta": 2}
@@ -51,6 +59,33 @@ def conn() -> sqlite3.Connection:
 
 def confidence_ok(conf: str) -> bool:
     return CONF_ORDER.get(conf, 0) >= CONF_ORDER.get(config.MIN_CONFIDENCE, 1)
+
+
+# ---------- lista de moedas monitoradas ----------
+
+def get_watchlist() -> list[str]:
+    """Moedas monitoradas. Na primeira execução, copia a lista SYMBOLS do .env para o banco."""
+    with conn() as c:
+        if not c.execute("SELECT 1 FROM meta WHERE key='watchlist_seeded'").fetchone():
+            c.executemany("INSERT OR IGNORE INTO watchlist (symbol, added_at) VALUES (?, ?)",
+                          [(s, _now()) for s in config.SYMBOLS])
+            c.execute("INSERT INTO meta (key, value) VALUES ('watchlist_seeded', ?)", (_now(),))
+        return [r["symbol"] for r in c.execute("SELECT symbol FROM watchlist ORDER BY added_at, symbol")]
+
+
+def add_symbol(symbol: str) -> bool:
+    """Adiciona; retorna False se já estava na lista."""
+    get_watchlist()  # garante a lista inicial
+    with conn() as c:
+        cur = c.execute("INSERT OR IGNORE INTO watchlist (symbol, added_at) VALUES (?, ?)", (symbol, _now()))
+        return cur.rowcount > 0
+
+
+def remove_symbol(symbol: str) -> bool:
+    """Remove; retorna False se não estava na lista."""
+    get_watchlist()
+    with conn() as c:
+        return c.execute("DELETE FROM watchlist WHERE symbol=?", (symbol,)).rowcount > 0
 
 
 # ---------- sinais ----------

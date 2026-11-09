@@ -81,8 +81,13 @@ journalctl --user -u crypto-alerts -f # logs
 | `/desempenho` | taxa de acerto e resultado total do paper trading |
 | `/analise BTC` | análise da IA na hora (não abre operação) |
 | `/moedas` | ativos monitorados |
+| `/adicionar XRP DOGE` | passa a monitorar uma ou mais moedas (valida na corretora) |
+| `/remover XRP` | para de monitorar |
 
 O bot só responde ao `TELEGRAM_CHAT_ID` configurado.
+
+A lista de moedas fica salva no banco (`crypto_alerts.db`). O `SYMBOLS` do `.env` só define a
+lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. Máximo de 30 moedas.
 
 ## Configuração
 
