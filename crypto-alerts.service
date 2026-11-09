@@ -1,0 +1,14 @@
+[Unit]
+Description=Monitor de criptomoedas com IA e alertas no Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/crypto_alerts
+ExecStart=%h/crypto_alerts/.venv/bin/python main.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

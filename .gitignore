@@ -1,0 +1,15 @@
+# Segredos — NUNCA versionar
+.env
+.env.*
+!.env.example
+
+# Ambiente e cache
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Dados locais (histórico de sinais / paper trading)
+*.db
+*.db-journal
+*.log
