@@ -62,6 +62,7 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     perfil = paper.get_profile()
     position = paper.open_position(symbol)
     snap = market.snapshot(df)
+    snap["tendencia_maior"] = market.higher_tf_context(symbol) or "indisponível"
     try:
         # preço ao vivo: a vela atual ainda está aberta e pode ter andado bastante desde o fechamento
         price = market.last_price(symbol)

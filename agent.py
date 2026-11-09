@@ -30,6 +30,8 @@ Regras gerais:
   risco/retorno de pelo menos 1,5. Para VENDA ou AGUARDAR use 0 nos dois campos.
 - vies: inteiro de -100 (forte inclinação de baixa) a +100 (forte inclinação de alta); perto de 0 = neutro.
   Seja coerente com os motivos: não dê vies neutro quando a análise aponta claramente para um lado.
+- dados_tecnicos.tendencia_maior resume o tempo gráfico acima (EMA50/200, RSI, máximas e mínimas).
+  Use-o como a "tendência maior" das regras do perfil; os suportes/resistências dele pesam mais.
 - dados_tecnicos.preco é o fechamento da última vela fechada; preco_agora é o preço ao vivo (a vela
   atual ainda está aberta). Considere os dois: se o preço já andou desde o fechamento, leve isso em conta.
 - gatilho_alta: preço ACIMA do atual cujo rompimento confirmaria alta e justificaria reanalisar para

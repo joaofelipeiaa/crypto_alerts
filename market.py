@@ -75,6 +75,36 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Tempo gráfico de contexto para cada timeframe (o da Coinbase não tem 4h)
+HIGHER_TF = {"1m": "15m", "5m": "30m", "15m": "1h", "30m": "2h", "1h": "6h", "2h": "1d", "6h": "1d"}
+
+
+def higher_tf_context(symbol: str, timeframe: str = config.TIMEFRAME) -> dict | None:
+    """Tendência no tempo gráfico maior, para a IA não operar contra ela sem saber."""
+    htf = HIGHER_TF.get(timeframe)
+    if not htf:
+        return None
+    try:
+        df = add_indicators(fetch_candles(symbol, htf))
+    except Exception:  # noqa: BLE001
+        return None
+    last = df.iloc[-1]
+    close = float(last["close"])
+    return {
+        "timeframe": htf,
+        "preco_fechamento": round(close, 6),
+        "rsi": round(float(last["rsi"]), 1),
+        "acima_ema50": bool(close > last["ema50"]),
+        "acima_ema200": bool(close > last["ema200"]),
+        "ema50": round(float(last["ema50"]), 6),
+        "ema200": round(float(last["ema200"]), 6),
+        "macd_hist": round(float(last["macd_hist"]), 6),
+        "variacao_12_velas_pct": round((close / float(df.iloc[-13]["close"]) - 1) * 100, 2),
+        "maxima_30_velas": round(float(df.tail(30)["high"].max()), 6),
+        "minima_30_velas": round(float(df.tail(30)["low"].min()), 6),
+    }
+
+
 def fear_greed() -> dict | None:
     """Índice Fear & Greed (0 = medo extremo, 100 = ganância extrema)."""
     try:
