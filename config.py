@@ -40,6 +40,9 @@ RISK_PROFILE = _get("RISK_PROFILE", "conservador").strip().lower()
 # baixa | media | alta. Vazio = usa o padrão do perfil (agressivo aceita "baixa")
 MIN_CONFIDENCE = _get("MIN_CONFIDENCE", "").strip().lower()
 TRIGGER_TTL_HOURS = int(_get("TRIGGER_TTL_HOURS", "48"))  # validade dos gatilhos de preço
+# Gatilhos automáticos (sem IA) na máxima/mínima recente do tempo gráfico maior, para moedas sem gatilho
+AUTO_TRIGGERS = _get("AUTO_TRIGGERS", "true").lower() == "true"
+AUTO_TRIGGER_HOURS = int(_get("AUTO_TRIGGER_HOURS", "6"))  # recalcula a faixa a cada N horas
 COOLDOWN_CANDLES = int(_get("COOLDOWN_CANDLES", "4"))  # velas sem reanalisar o mesmo ativo
 SEND_REJECTED = _get("SEND_REJECTED", "false").lower() == "true"  # avisar quando a IA descarta
 

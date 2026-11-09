@@ -66,6 +66,7 @@ MIGRATIONS = {
         "eval_72h": "INTEGER DEFAULT 0",
     },
     "trades": {"perfil": "TEXT"},
+    "triggers": {"origin": "TEXT DEFAULT 'ia'"},  # ia (níveis da análise) | auto (faixa calculada)
 }
 
 CONF_ORDER = {"baixa": 0, "media": 1, "alta": 2}
@@ -177,21 +178,31 @@ def save_signal(symbol: str, candle_ts: str, candidate: dict | None, decision: d
 
 # ---------- gatilhos de preço ----------
 
-def set_trigger(symbol: str, price: float, up: float, down: float, min_dist: float = 0) -> dict | None:
+def last_analysis_at(symbol: str) -> datetime | None:
+    """Quando a IA analisou a moeda pela última vez (qualquer origem)."""
+    with conn() as c:
+        row = c.execute("SELECT created_at FROM signals WHERE symbol=? ORDER BY id DESC LIMIT 1",
+                        (symbol,)).fetchone()
+    return datetime.fromisoformat(row["created_at"]) if row else None
+
+
+def set_trigger(symbol: str, price: float, up: float, down: float, min_dist: float = 0,
+                origin: str = "ia", ttl_hours: int | None = None) -> dict | None:
     """Salva os níveis da última análise (substitui os anteriores).
 
-    Ignora níveis do lado errado do preço ou mais perto que min_dist (disparariam com ruído).
+    Ignora níveis do lado errado do preço, mais perto que min_dist (disparariam com ruído) ou
+    absurdamente longe (a IA às vezes erra a escala em moedas de preço muito baixo).
     """
-    up = up if up and up >= price + min_dist else None
-    down = down if down and 0 < down <= price - min_dist else None
+    up = up if up and price + min_dist <= up <= price * 1.5 else None
+    down = down if down and price * 0.5 <= down <= price - min_dist else None
     with conn() as c:
         c.execute("DELETE FROM triggers WHERE symbol=?", (symbol,))
         if not up and not down:
             return None
-        expires = datetime.now(timezone.utc) + timedelta(hours=config.TRIGGER_TTL_HOURS)
-        c.execute("INSERT INTO triggers (symbol, up, down, created_at, expires_at) VALUES (?,?,?,?,?)",
-                  (symbol, up, down, _now(), expires.isoformat(timespec="seconds")))
-    return {"up": up, "down": down}
+        expires = datetime.now(timezone.utc) + timedelta(hours=ttl_hours or config.TRIGGER_TTL_HOURS)
+        c.execute("INSERT INTO triggers (symbol, up, down, created_at, expires_at, origin) VALUES (?,?,?,?,?,?)",
+                  (symbol, up, down, _now(), expires.isoformat(timespec="seconds"), origin))
+    return {"up": up, "down": down, "origin": origin}
 
 
 def get_trigger(symbol: str) -> dict | None:

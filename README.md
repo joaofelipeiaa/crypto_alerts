@@ -100,6 +100,9 @@ lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. M�
 - **Viés** (-100 a +100): toda análise diz para que lado o ativo está inclinado, mesmo quando a decisão é AGUARDAR.
 - **Gatilhos**: a IA marca um preço acima (confirmação de alta) e outro abaixo (piora do cenário).
   Se o preço cruzar um deles, o bot reanalisa na hora e avisa. Valem por `TRIGGER_TTL_HOURS`.
+- **Gatilhos automáticos** (`AUTO_TRIGGERS`): moedas sem gatilho da IA ganham, sem custo de IA, uma faixa
+  na máxima/mínima das últimas 30 velas do tempo gráfico maior (~2,5 dias com velas de 30m). Romper a faixa
+  dispara uma análise. Depois disso valem os níveis da IA. No `/gatilhos`: 🧠 = IA, 📏 = automático.
 - **Placar** (`/placar`): 24h e 72h depois de cada análise, o bot confere o preço. Compara os sinais de
   compra que a IA aprovou com os que ela descartou. Se os descartados sobem tanto quanto os aprovados,
   a IA está cautelosa demais; se sobem menos, o filtro está funcionando.

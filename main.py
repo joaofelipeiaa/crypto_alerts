@@ -104,6 +104,28 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     return decision
 
 
+def ensure_auto_trigger(symbol: str, df: pd.DataFrame) -> None:
+    """Moeda sem gatilho e sem análise recente ganha níveis na máxima/mínima do tempo gráfico maior.
+
+    Não usa IA: ela só é chamada se o preço romper a faixa. Depois de uma análise, valem os níveis
+    da IA; se ela não deu nenhum, a faixa automática volta após AUTO_TRIGGER_HOURS sem análise.
+    """
+    if not config.AUTO_TRIGGERS or paper.get_trigger(symbol):
+        return
+    last = paper.last_analysis_at(symbol)
+    if last and pd.Timestamp.now(tz="UTC") - pd.Timestamp(last) < pd.Timedelta(hours=config.AUTO_TRIGGER_HOURS):
+        return
+    ctx = market.higher_tf_context(symbol)
+    if not ctx:
+        return
+    price = float(df.iloc[-1]["close"])
+    trig = paper.set_trigger(symbol, price, ctx["maxima_30_velas"], ctx["minima_30_velas"],
+                             min_dist=0.005 * price, origin="auto", ttl_hours=config.AUTO_TRIGGER_HOURS)
+    if trig:
+        log.info("%s: gatilho automático (30 velas de %s): acima de %s / abaixo de %s",
+                 symbol, ctx["timeframe"], trig["up"], trig["down"])
+
+
 def check_trigger(symbol: str) -> dict | None:
     """Se o preço cruzou um gatilho salvo, retorna o sinal candidato correspondente."""
     trig = paper.get_trigger(symbol)
@@ -117,16 +139,24 @@ def check_trigger(symbol: str) -> dict | None:
     else:
         return None
     paper.clear_trigger(symbol)
+    if trig.get("origin") == "auto":
+        extreme = "máxima" if direction == "COMPRA" else "mínima"
+        origin_txt = f"{extreme} recente do tempo gráfico maior"
+        gatilho = (f"Preço {word} a {extreme} das últimas 30 velas do tempo gráfico maior ({fmt_price(level)}): "
+                   "rompimento da faixa de preço dos últimos dias")
+    else:
+        origin_txt = "nível marcado na análise anterior"
+        gatilho = f"Preço {word} o nível {fmt_price(level)} definido como gatilho na análise anterior"
     notifier.send(f"🔔 <b>{esc(symbol)} {word} {fmt_price(level)}</b> (agora {fmt_price(price)}), "
-                  "nível marcado na análise anterior. Reanalisando...",
+                  f"{origin_txt}. Analisando...",
                   buttons=notifier.trade_button(symbol))
-    return {"direcao": direction, "contrarios": [],
-            "gatilhos": [f"Preço {word} o nível {fmt_price(level)} definido como gatilho na análise anterior"]}
+    return {"direcao": direction, "contrarios": [], "gatilhos": [gatilho]}
 
 
 def run_symbol(symbol: str) -> None:
     df = market.add_indicators(market.fetch_candles(symbol))
     check_positions(symbol, df)
+    ensure_auto_trigger(symbol, df)
 
     trigger_candidate = check_trigger(symbol)
     if trigger_candidate:
@@ -322,14 +352,16 @@ def cmd_triggers() -> None:
     if not trigs:
         notifier.send("Nenhum gatilho de preço ativo.")
         return
-    lines = ["<b>🔔 Gatilhos ativos</b> (disparam nova análise)"]
+    lines = ["<b>🔔 Gatilhos ativos</b> (disparam nova análise)",
+             "🧠 = nível definido pela IA · 📏 = faixa automática dos últimos dias"]
     for t in trigs:
         parts = []
         if t["up"]:
             parts.append(f"acima de {fmt_price(t['up'])}")
         if t["down"]:
             parts.append(f"abaixo de {fmt_price(t['down'])}")
-        lines.append(f"• {esc(t['symbol'])}: {' ou '.join(parts)}")
+        mark = "📏" if t.get("origin") == "auto" else "🧠"
+        lines.append(f"{mark} {esc(t['symbol'])}: {' ou '.join(parts)}")
     notifier.send("\n".join(lines))
 
 
