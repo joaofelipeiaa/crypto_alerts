@@ -42,7 +42,8 @@ def check_positions(symbol: str, df: pd.DataFrame) -> None:
         notifier.send(
             f"{icon} <b>Paper trade fechado: {esc(symbol)}</b> ({esc(closed['exit_reason'])})\n"
             f"Entrada {fmt_price(closed['entry'])} → Saída {fmt_price(closed['exit'])}\n"
-            f"Resultado: <b>{closed['pnl_usd']:+.2f} USD ({closed['pnl_pct']:+.2f}%)</b>"
+            f"Resultado: <b>{closed['pnl_usd']:+.2f} USD ({closed['pnl_pct']:+.2f}%)</b>",
+            buttons=notifier.trade_button(symbol),
         )
 
 
@@ -78,14 +79,16 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
                   and paper.confidence_ok(decision["confianca"]))
     alerted = source in ("manual", "gatilho") or actionable or config.SEND_REJECTED
     if alerted:
-        notifier.send(notifier.format_decision(symbol, price, decision, candidate, perfil, trigger))
+        notifier.send(notifier.format_decision(symbol, price, decision, candidate, perfil, trigger),
+                      buttons=notifier.trade_button(symbol))
 
     if actionable and decision["acao"] == "COMPRA" and not position:
         paper.open_trade(symbol, price, decision["stop_loss"], decision["alvo"])
     elif actionable and decision["acao"] == "VENDA" and position:
         closed = paper.close_trade(position, price, "sinal de venda")
         notifier.send(f"📤 Paper trade de {esc(symbol)} encerrado pelo sinal de venda: "
-                      f"<b>{closed['pnl_usd']:+.2f} USD ({closed['pnl_pct']:+.2f}%)</b>")
+                      f"<b>{closed['pnl_usd']:+.2f} USD ({closed['pnl_pct']:+.2f}%)</b>",
+                      buttons=notifier.trade_button(symbol))
 
     paper.save_signal(symbol, df.iloc[-1]["ts"].isoformat(), candidate, decision, price, alerted, source)
     return decision
@@ -105,7 +108,8 @@ def check_trigger(symbol: str) -> dict | None:
         return None
     paper.clear_trigger(symbol)
     notifier.send(f"🔔 <b>{esc(symbol)} {word} {fmt_price(level)}</b> (agora {fmt_price(price)}), "
-                  "nível marcado na análise anterior. Reanalisando...")
+                  "nível marcado na análise anterior. Reanalisando...",
+                  buttons=notifier.trade_button(symbol))
     return {"direcao": direction, "contrarios": [],
             "gatilhos": [f"Preço {word} o nível {fmt_price(level)} definido como gatilho na análise anterior"]}
 

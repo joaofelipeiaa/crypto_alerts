@@ -1,5 +1,6 @@
 """Envio e recebimento de mensagens do Telegram (API HTTP direta)."""
 import html
+import json
 import re
 import logging
 
@@ -11,20 +12,47 @@ log = logging.getLogger(__name__)
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 
 
-def send(text: str, chat_id: str | int | None = None) -> None:
+# Página de negociação de cada corretora ({base}/{quote} vêm do par, ex.: BTC/USD)
+TRADE_URLS = {
+    "coinbase": "https://www.coinbase.com/advanced-trade/spot/{base}-{quote}",
+    "binance": "https://www.binance.com/en/trade/{base}_{quote}",
+    "kraken": "https://pro.kraken.com/app/trade/{base}-{quote}",
+}
+
+
+def trade_url(symbol: str) -> str | None:
+    template = TRADE_URLS.get(config.EXCHANGE)
+    if not template or "/" not in symbol:
+        return None
+    base, quote = symbol.split("/", 1)
+    return template.format(base=base, quote=quote)
+
+
+def trade_button(symbol: str) -> dict | None:
+    """Botão do Telegram que abre o par na corretora."""
+    url = trade_url(symbol)
+    if not url:
+        return None
+    label = f"📲 Abrir {symbol} na {config.EXCHANGE.capitalize()}"
+    return {"inline_keyboard": [[{"text": label, "url": url}]]}
+
+
+def send(text: str, chat_id: str | int | None = None, buttons: dict | None = None) -> None:
     chat_id = chat_id or config.TELEGRAM_CHAT_ID
+    extra = {"reply_markup": json.dumps(buttons)} if buttons else {}
     try:
         r = requests.post(f"{API}/sendMessage", timeout=15, data={
             "chat_id": chat_id,
             "text": text[:4000],
             "parse_mode": "HTML",
             "disable_web_page_preview": "true",
+            **extra,
         })
         if not r.ok and "parse" in r.text.lower():
             # HTML inválido (ex.: mensagem cortada no meio de uma tag): reenvia como texto puro
             plain = html.unescape(re.sub(r"<[^>]+>", "", text))[:4000]
             r = requests.post(f"{API}/sendMessage", timeout=15, data={
-                "chat_id": chat_id, "text": plain, "disable_web_page_preview": "true",
+                "chat_id": chat_id, "text": plain, "disable_web_page_preview": "true", **extra,
             })
         if not r.ok:
             log.error("Falha ao enviar Telegram: %s", r.text[:300])
