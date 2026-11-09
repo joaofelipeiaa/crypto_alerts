@@ -1,8 +1,9 @@
-"""Registro de sinais e paper trading (operações simuladas) em SQLite."""
+"""Banco SQLite: sinais, placar, gatilhos, perfil de risco e paper trading (operações simuladas)."""
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
+from profiles import DEFAULT_PROFILE, PROFILES
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -41,24 +42,84 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS triggers (
+    symbol TEXT PRIMARY KEY,
+    up REAL,
+    down REAL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
 """
 
+# Colunas adicionadas depois da primeira versão (o banco existente é migrado automaticamente)
+MIGRATIONS = {
+    "signals": {
+        "cand_dir": "TEXT",          # direção do sinal candidato (COMPRA/VENDA) ou NULL
+        "source": "TEXT DEFAULT 'auto'",  # auto | gatilho | manual
+        "perfil": "TEXT",
+        "vies": "INTEGER",
+        "gatilho_alta": "REAL",
+        "gatilho_baixa": "REAL",
+        "ret_24h": "REAL",           # variação % do preço 24h depois da análise
+        "ret_72h": "REAL",
+        "eval_24h": "INTEGER DEFAULT 0",  # 1 = já conferido (mesmo que sem dado)
+        "eval_72h": "INTEGER DEFAULT 0",
+    },
+    "trades": {"perfil": "TEXT"},
+}
+
 CONF_ORDER = {"baixa": 0, "media": 1, "alta": 2}
+_migrated = False
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _migrate(c: sqlite3.Connection) -> None:
+    for table, cols in MIGRATIONS.items():
+        existing = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        for col, ddl in cols.items():
+            if col not in existing:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+    # Sinais antigos: recupera a direção a partir do texto salvo
+    c.execute("UPDATE signals SET cand_dir='COMPRA' WHERE cand_dir IS NULL AND candidate LIKE '%''direcao'': ''COMPRA''%'")
+    c.execute("UPDATE signals SET cand_dir='VENDA' WHERE cand_dir IS NULL AND candidate LIKE '%''direcao'': ''VENDA''%'")
+
+
 def conn() -> sqlite3.Connection:
+    global _migrated
     c = sqlite3.connect(config.DB_PATH)
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA)
+    if not _migrated:
+        c.executescript(SCHEMA)
+        with c:
+            _migrate(c)
+        _migrated = True
     return c
 
 
+# ---------- perfil de risco ----------
+
+def get_profile() -> str:
+    with conn() as c:
+        row = c.execute("SELECT value FROM meta WHERE key='perfil'").fetchone()
+    name = row["value"] if row else config.RISK_PROFILE
+    return name if name in PROFILES else DEFAULT_PROFILE
+
+
+def set_profile(name: str) -> None:
+    with conn() as c:
+        c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('perfil', ?)", (name,))
+
+
+def min_confidence() -> str:
+    """MIN_CONFIDENCE do .env, se definido; senão o padrão do perfil."""
+    return config.MIN_CONFIDENCE or PROFILES[get_profile()]["min_conf"]
+
+
 def confidence_ok(conf: str) -> bool:
-    return CONF_ORDER.get(conf, 0) >= CONF_ORDER.get(config.MIN_CONFIDENCE, 1)
+    return CONF_ORDER.get(conf, 0) >= CONF_ORDER.get(min_confidence(), 1)
 
 
 # ---------- lista de moedas monitoradas ----------
@@ -84,6 +145,7 @@ def add_symbol(symbol: str) -> bool:
 def remove_symbol(symbol: str) -> bool:
     """Remove; retorna False se não estava na lista."""
     get_watchlist()
+    clear_trigger(symbol)
     with conn() as c:
         return c.execute("DELETE FROM watchlist WHERE symbol=?", (symbol,)).rowcount > 0
 
@@ -91,23 +153,117 @@ def remove_symbol(symbol: str) -> bool:
 # ---------- sinais ----------
 
 def last_signal_candle(symbol: str) -> str | None:
+    """Vela da última análise automática (análises manuais não contam para o cooldown)."""
     with conn() as c:
-        row = c.execute("SELECT candle_ts FROM signals WHERE symbol=? ORDER BY id DESC LIMIT 1",
-                        (symbol,)).fetchone()
+        row = c.execute("SELECT candle_ts FROM signals WHERE symbol=? AND COALESCE(source,'auto') != 'manual'"
+                        " ORDER BY id DESC LIMIT 1", (symbol,)).fetchone()
     return row["candle_ts"] if row else None
 
 
 def save_signal(symbol: str, candle_ts: str, candidate: dict | None, decision: dict | None,
-                price: float, alerted: bool) -> None:
+                price: float, alerted: bool, source: str = "auto") -> None:
     d = decision or {}
     with conn() as c:
         c.execute(
-            "INSERT INTO signals (created_at, symbol, candle_ts, candidate, acao, confianca, resumo,"
-            " preco, stop_loss, alvo, alerted) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (_now(), symbol, candle_ts, str(candidate) if candidate else None, d.get("acao"),
-             d.get("confianca"), d.get("resumo"), price, d.get("stop_loss"), d.get("alvo"),
-             int(alerted)),
+            "INSERT INTO signals (created_at, symbol, candle_ts, candidate, cand_dir, acao, confianca, resumo,"
+            " preco, stop_loss, alvo, alerted, source, perfil, vies, gatilho_alta, gatilho_baixa)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (_now(), symbol, candle_ts, str(candidate) if candidate else None,
+             candidate["direcao"] if candidate else None, d.get("acao"), d.get("confianca"),
+             d.get("resumo"), price, d.get("stop_loss"), d.get("alvo"), int(alerted), source,
+             get_profile(), d.get("vies"), d.get("gatilho_alta"), d.get("gatilho_baixa")),
         )
+
+
+# ---------- gatilhos de preço ----------
+
+def set_trigger(symbol: str, price: float, up: float, down: float) -> dict | None:
+    """Salva os níveis da última análise (substitui os anteriores). Ignora níveis incoerentes."""
+    up = up if up and up > price else None
+    down = down if down and 0 < down < price else None
+    with conn() as c:
+        c.execute("DELETE FROM triggers WHERE symbol=?", (symbol,))
+        if not up and not down:
+            return None
+        expires = datetime.now(timezone.utc) + timedelta(hours=config.TRIGGER_TTL_HOURS)
+        c.execute("INSERT INTO triggers (symbol, up, down, created_at, expires_at) VALUES (?,?,?,?,?)",
+                  (symbol, up, down, _now(), expires.isoformat(timespec="seconds")))
+    return {"up": up, "down": down}
+
+
+def get_trigger(symbol: str) -> dict | None:
+    with conn() as c:
+        row = c.execute("SELECT * FROM triggers WHERE symbol=?", (symbol,)).fetchone()
+    if not row:
+        return None
+    if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        clear_trigger(symbol)
+        return None
+    return dict(row)
+
+
+def clear_trigger(symbol: str) -> None:
+    with conn() as c:
+        c.execute("DELETE FROM triggers WHERE symbol=?", (symbol,))
+
+
+def all_triggers() -> list[dict]:
+    with conn() as c:
+        rows = [dict(r) for r in c.execute("SELECT * FROM triggers ORDER BY symbol")]
+    now = datetime.now(timezone.utc)
+    return [r for r in rows if datetime.fromisoformat(r["expires_at"]) >= now]
+
+
+# ---------- placar (o que o preço fez depois de cada análise) ----------
+
+def pending_evaluations(hours: int, limit: int = 30) -> list[dict]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+    with conn() as c:
+        return [dict(r) for r in c.execute(
+            f"SELECT id, symbol, created_at, preco FROM signals WHERE eval_{hours}h=0 AND acao IS NOT NULL"
+            " AND preco > 0 AND created_at <= ? ORDER BY id LIMIT ?", (cutoff, limit))]
+
+
+def set_evaluation(signal_id: int, hours: int, ret_pct: float | None) -> None:
+    with conn() as c:
+        c.execute(f"UPDATE signals SET ret_{hours}h=?, eval_{hours}h=1 WHERE id=?", (ret_pct, signal_id))
+
+
+def _stats(rows: list, col: str, fee_round_trip: float) -> dict | None:
+    vals = [r[col] for r in rows if r[col] is not None]
+    if not vals:
+        return None
+    return {"n": len(vals), "media": sum(vals) / len(vals),
+            "lucro_pct": sum(v > fee_round_trip for v in vals) / len(vals) * 100}
+
+
+def scoreboard(perfil: str | None = None) -> dict:
+    fee = 2 * config.PAPER_FEE_PCT  # ida e volta: só conta como lucro o que passa das taxas
+    where, args = "WHERE acao IS NOT NULL", []
+    if perfil:
+        where += " AND perfil=?"
+        args.append(perfil)
+    with conn() as c:
+        rows = [dict(r) for r in c.execute(f"SELECT * FROM signals {where}", args)]
+    buy_cands = [r for r in rows if r["cand_dir"] == "COMPRA"]
+    approved = [r for r in buy_cands if r["acao"] == "COMPRA"]
+    rejected = [r for r in buy_cands if r["acao"] != "COMPRA"]
+    bull = [r for r in rows if (r["vies"] or 0) >= 30]
+    bear = [r for r in rows if (r["vies"] or 0) <= -30]
+
+    def hit_rate(group: list, sign: int) -> float | None:
+        vals = [r["ret_24h"] for r in group if r["ret_24h"] is not None]
+        return (sum((v > 0) == (sign > 0) for v in vals) / len(vals) * 100) if vals else None
+
+    return {
+        "total": len(rows),
+        "avaliados_24h": sum(r["ret_24h"] is not None for r in rows),
+        "aprovadas": {h: _stats(approved, f"ret_{h}h", fee) for h in (24, 72)},
+        "descartadas": {h: _stats(rejected, f"ret_{h}h", fee) for h in (24, 72)},
+        "vies_alta": {**{h: _stats(bull, f"ret_{h}h", fee) for h in (24, 72)}, "acerto": hit_rate(bull, 1)},
+        "vies_baixa": {**{h: _stats(bear, f"ret_{h}h", fee) for h in (24, 72)}, "acerto": hit_rate(bear, -1)},
+        "fee": fee,
+    }
 
 
 # ---------- posições simuladas ----------
@@ -121,8 +277,8 @@ def open_position(symbol: str) -> dict | None:
 def open_trade(symbol: str, price: float, stop: float, alvo: float) -> dict:
     qty = config.PAPER_TRADE_USD / price
     with conn() as c:
-        c.execute("INSERT INTO trades (symbol, opened_at, entry, qty, stop_loss, alvo) VALUES (?,?,?,?,?,?)",
-                  (symbol, _now(), price, qty, stop or None, alvo or None))
+        c.execute("INSERT INTO trades (symbol, opened_at, entry, qty, stop_loss, alvo, perfil) VALUES (?,?,?,?,?,?,?)",
+                  (symbol, _now(), price, qty, stop or None, alvo or None, get_profile()))
     return open_position(symbol)
 
 
@@ -163,6 +319,11 @@ def performance() -> dict:
     wins = [t for t in closed if t["pnl_usd"] > 0]
     losses = [t for t in closed if t["pnl_usd"] <= 0]
     total = sum(t["pnl_usd"] for t in closed)
+    by_profile = {}
+    for t in closed:
+        p = by_profile.setdefault(t.get("perfil") or "conservador", {"n": 0, "pnl": 0.0})
+        p["n"] += 1
+        p["pnl"] += t["pnl_usd"]
     return {
         "analises": n_signals,
         "alertas": n_alerts,
@@ -173,4 +334,5 @@ def performance() -> dict:
         "pnl_total_usd": total,
         "ganho_medio_usd": (sum(t["pnl_usd"] for t in wins) / len(wins)) if wins else 0.0,
         "perda_media_usd": (sum(t["pnl_usd"] for t in losses) / len(losses)) if losses else 0.0,
+        "por_perfil": by_profile,
     }

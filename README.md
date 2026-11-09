@@ -79,7 +79,10 @@ journalctl --user -u crypto-alerts -f # logs
 |---|---|
 | `/status` | posições simuladas abertas, com lucro/prejuízo atual |
 | `/desempenho` | taxa de acerto e resultado total do paper trading |
-| `/analise BTC` | análise da IA na hora (não abre operação) |
+| `/placar` | o que o preço fez 24h/72h depois das análises (aprovadas × descartadas, viés) |
+| `/gatilhos` | preços que disparam uma nova análise |
+| `/perfil` | perfil de risco atual; `/perfil moderado` troca (admin) |
+| `/analise BTC` | análise da IA na hora (não abre operação; admin) |
 | `/moedas` | ativos monitorados |
 | `/adicionar XRP DOGE` | passa a monitorar uma ou mais moedas (valida na corretora) |
 | `/remover XRP` | para de monitorar |
@@ -88,6 +91,21 @@ O bot só responde ao `TELEGRAM_CHAT_ID` configurado.
 
 A lista de moedas fica salva no banco (`crypto_alerts.db`). O `SYMBOLS` do `.env` só define a
 lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. Máximo de 30 moedas.
+
+## Viés, gatilhos, placar e perfis
+
+- **Viés** (-100 a +100): toda análise diz para que lado o ativo está inclinado, mesmo quando a decisão é AGUARDAR.
+- **Gatilhos**: a IA marca um preço acima (confirmação de alta) e outro abaixo (piora do cenário).
+  Se o preço cruzar um deles, o bot reanalisa na hora e avisa. Valem por `TRIGGER_TTL_HOURS`.
+- **Placar** (`/placar`): 24h e 72h depois de cada análise, o bot confere o preço. Compara os sinais de
+  compra que a IA aprovou com os que ela descartou. Se os descartados sobem tanto quanto os aprovados,
+  a IA está cautelosa demais; se sobem menos, o filtro está funcionando.
+- **Perfis** (`/perfil`):
+  - `conservador`: só compra a favor da tendência maior; poucos alertas.
+  - `moderado`: aceita repiques/reversões contra a tendência, com stop mais curto.
+  - `agressivo`: aceita confirmação parcial e momentum; mais alertas e mais erros (confiança mínima "baixa").
+
+  Cada análise e trade simulado guarda o perfil usado: `/placar moderado` e `/desempenho` comparam os perfis.
 
 ## Usar em um grupo
 
@@ -123,6 +141,7 @@ timeframe, intervalo, confiança mínima, cooldown, valor por operação simulad
 | `market.py` | velas (ccxt), indicadores, Fear & Greed |
 | `triage.py` | regras que geram o sinal candidato |
 | `agent.py` | agente de IA (OpenAI Responses API + busca na web) |
-| `paper.py` | SQLite: histórico de sinais e paper trading |
+| `paper.py` | SQLite: sinais, placar, gatilhos, perfil e paper trading |
+| `profiles.py` | regras de cada perfil de risco |
 | `notifier.py` | envio/recebimento no Telegram |
 | `testar.py` | verificação da instalação |

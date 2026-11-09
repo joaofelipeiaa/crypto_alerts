@@ -67,11 +67,20 @@ def fmt_price(p: float) -> str:
     return f"{p:,.2f}" if p >= 1 else f"{p:.6f}"
 
 
-def format_decision(symbol: str, price: float, decision: dict, candidate: dict | None) -> str:
+def bias_label(v: int) -> str:
+    if abs(v) < 15:
+        return f"➖ neutro ({v:+d})"
+    force = "fraca" if abs(v) < 40 else "moderada" if abs(v) < 70 else "forte"
+    return f"📈 alta {force} ({v:+d})" if v > 0 else f"📉 baixa {force} ({v:+d})"
+
+
+def format_decision(symbol: str, price: float, decision: dict, candidate: dict | None,
+                    perfil: str | None = None, trigger: dict | None = None) -> str:
     icon = {"COMPRA": "🟢", "VENDA": "🔴", "AGUARDAR": "⚪"}[decision["acao"]]
     lines = [
         f"{icon} <b>{decision['acao']} {esc(symbol)}</b>  ·  confiança <b>{esc(decision['confianca'])}</b>",
         f"Preço: <code>{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}",
+        f"Viés: <b>{bias_label(decision.get('vies', 0))}</b>",
         "",
         rich(decision["resumo"]),
     ]
@@ -89,5 +98,15 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
         if decision["alvo"]:
             gain = (decision["alvo"] - price) / price * 100
             lines.append(f"🎯 Alvo: <code>{fmt_price(decision['alvo'])}</code> (+{gain:.1f}%)")
-    lines += ["", "<i>Sinal automatizado, não é recomendação financeira.</i>"]
+    if trigger:
+        parts = []
+        if trigger.get("up"):
+            parts.append(f"passar de <code>{fmt_price(trigger['up'])}</code> "
+                         f"(+{(trigger['up'] / price - 1) * 100:.1f}%)")
+        if trigger.get("down"):
+            parts.append(f"perder <code>{fmt_price(trigger['down'])}</code> "
+                         f"({(trigger['down'] / price - 1) * 100:.1f}%)")
+        lines += ["", f"🔔 Reanaliso e aviso se {' ou '.join(parts)}"]
+    footer = f"Perfil {perfil} · " if perfil else ""
+    lines += ["", f"<i>{esc(footer)}Sinal automatizado, não é recomendação financeira.</i>"]
     return "\n".join(lines)

@@ -23,6 +23,14 @@ def symbol_exists(symbol: str) -> bool:
     return bool(m) and m.get("active") is not False
 
 
+def price_at(symbol: str, ts_ms: int) -> float | None:
+    """Preço (abertura da vela de 1h) no momento indicado. None se a corretora não tiver o dado."""
+    candles = _exchange.fetch_ohlcv(symbol, "1h", since=ts_ms, limit=1)
+    if candles and abs(candles[0][0] - ts_ms) <= 2 * 3600 * 1000:
+        return float(candles[0][1])
+    return None
+
+
 def last_price(symbol: str) -> float:
     return float(_exchange.fetch_ticker(symbol)["last"])
 

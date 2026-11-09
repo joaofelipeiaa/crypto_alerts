@@ -35,7 +35,11 @@ TIMEFRAME = _get("TIMEFRAME", "1h")
 CHECK_INTERVAL_MIN = int(_get("CHECK_INTERVAL_MIN", "5"))
 
 # Regras de alerta
-MIN_CONFIDENCE = _get("MIN_CONFIDENCE", "media")  # baixa | media | alta
+# Perfil inicial: conservador | moderado | agressivo (depois dá para trocar pelo bot com /perfil)
+RISK_PROFILE = _get("RISK_PROFILE", "conservador").strip().lower()
+# baixa | media | alta. Vazio = usa o padrão do perfil (agressivo aceita "baixa")
+MIN_CONFIDENCE = _get("MIN_CONFIDENCE", "").strip().lower()
+TRIGGER_TTL_HOURS = int(_get("TRIGGER_TTL_HOURS", "48"))  # validade dos gatilhos de preço
 COOLDOWN_CANDLES = int(_get("COOLDOWN_CANDLES", "4"))  # velas sem reanalisar o mesmo ativo
 SEND_REJECTED = _get("SEND_REJECTED", "false").lower() == "true"  # avisar quando a IA descarta
 
