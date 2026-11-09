@@ -1,5 +1,6 @@
 """Envio e recebimento de mensagens do Telegram (API HTTP direta)."""
 import html
+import re
 import logging
 
 import requests
@@ -18,6 +19,12 @@ def send(text: str) -> None:
             "parse_mode": "HTML",
             "disable_web_page_preview": "true",
         })
+        if not r.ok and "parse" in r.text.lower():
+            # HTML inválido (ex.: mensagem cortada no meio de uma tag): reenvia como texto puro
+            plain = html.unescape(re.sub(r"<[^>]+>", "", text))[:4000]
+            r = requests.post(f"{API}/sendMessage", timeout=15, data={
+                "chat_id": config.TELEGRAM_CHAT_ID, "text": plain, "disable_web_page_preview": "true",
+            })
         if not r.ok:
             log.error("Falha ao enviar Telegram: %s", r.text[:300])
     except requests.RequestException as e:
@@ -37,6 +44,24 @@ def esc(s) -> str:
     return html.escape(str(s))
 
 
+_MD_LINK = re.compile(r"\(?\[([^\]]+)\]\((https?://[^)\s]+)\)\)?")
+
+
+def rich(s) -> str:
+    """Escapa o texto e converte links Markdown ([site](url)) em links clicáveis do Telegram."""
+    def repl(m: re.Match) -> str:
+        url = re.sub(r"[?&]utm_source=[^&]*$", "", m.group(2))
+        return f'(<a href="{html.escape(url, quote=True)}">{html.escape(m.group(1))}</a>)'
+
+    out, last = [], 0
+    for m in _MD_LINK.finditer(str(s)):
+        out.append(esc(str(s)[last:m.start()]))
+        out.append(repl(m))
+        last = m.end()
+    out.append(esc(str(s)[last:]))
+    return "".join(out)
+
+
 def fmt_price(p: float) -> str:
     return f"{p:,.2f}" if p >= 1 else f"{p:.6f}"
 
@@ -47,16 +72,16 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
         f"{icon} <b>{decision['acao']} {esc(symbol)}</b>  ·  confiança <b>{esc(decision['confianca'])}</b>",
         f"Preço: <code>{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}",
         "",
-        esc(decision["resumo"]),
+        rich(decision["resumo"]),
     ]
     if candidate:
         lines += ["", "<b>Gatilhos técnicos:</b> " + esc("; ".join(candidate["gatilhos"]))]
     if decision["motivos"]:
-        lines += ["", "<b>Motivos:</b>"] + [f"• {esc(m)}" for m in decision["motivos"]]
+        lines += ["", "<b>Motivos:</b>"] + [f"• {rich(m)}" for m in decision["motivos"]]
     if decision["riscos"]:
-        lines += ["", "<b>Riscos:</b>"] + [f"• {esc(r)}" for r in decision["riscos"]]
+        lines += ["", "<b>Riscos:</b>"] + [f"• {rich(r)}" for r in decision["riscos"]]
     if decision["noticias"]:
-        lines += ["", "<b>Notícias:</b>"] + [f"• {esc(n)}" for n in decision["noticias"][:4]]
+        lines += ["", "<b>Notícias:</b>"] + [f"• {rich(n)}" for n in decision["noticias"][:4]]
     if decision["acao"] == "COMPRA" and decision["stop_loss"]:
         risk = (price - decision["stop_loss"]) / price * 100
         lines += ["", f"🛑 Stop: <code>{fmt_price(decision['stop_loss'])}</code> (-{risk:.1f}%)"]
