@@ -27,7 +27,7 @@ A cada 5 min: velas fechadas da corretora
 As posições simuladas são encerradas no stop, no alvo ou em um sinal de venda, com taxas incluídas.
 
 Os alertas de análise, gatilho e paper trade vêm com um botão **📲 Abrir na Coinbase** que leva direto
-à tela de negociação do par (Advanced Trade). O bot nunca envia ordens: a decisão e o clique são seus.
+à página da moeda na Coinbase normal (a mesma do app, com o botão Comprar/Vender). O bot nunca envia ordens: a decisão e o clique são seus.
 
 ## Instalação
 

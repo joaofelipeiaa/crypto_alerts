@@ -14,18 +14,38 @@ API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 
 # Página de negociação de cada corretora ({base}/{quote} vêm do par, ex.: BTC/USD)
 TRADE_URLS = {
-    "coinbase": "https://www.coinbase.com/advanced-trade/spot/{base}-{quote}",
+    "coinbase": "https://www.coinbase.com/advanced-trade/spot/{base}-{quote}",  # só se o slug falhar
     "binance": "https://www.binance.com/en/trade/{base}_{quote}",
     "kraken": "https://pro.kraken.com/app/trade/{base}-{quote}",
 }
+_coinbase_slugs: dict[str, str] = {}
+
+
+def _coinbase_slug(base: str) -> str | None:
+    """Nome da moeda na URL da Coinbase normal (BTC → bitcoin, POL → polygon-pol)."""
+    if base not in _coinbase_slugs:
+        try:
+            r = requests.get("https://api.coinbase.com/v2/assets/search", timeout=8,
+                             params={"base": "USD", "query": base})
+            matches = [a for a in r.json().get("data", []) if a.get("symbol", "").upper() == base]
+            matches.sort(key=lambda a: not a.get("listed", False))  # listadas primeiro
+            if matches and matches[0].get("slug"):
+                _coinbase_slugs[base] = matches[0]["slug"]
+        except (requests.RequestException, ValueError):
+            pass
+    return _coinbase_slugs.get(base)
 
 
 def trade_url(symbol: str) -> str | None:
-    template = TRADE_URLS.get(config.EXCHANGE)
-    if not template or "/" not in symbol:
+    if "/" not in symbol:
         return None
-    base, quote = symbol.split("/", 1)
-    return template.format(base=base, quote=quote)
+    base, quote = symbol.upper().split("/", 1)
+    if config.EXCHANGE == "coinbase":
+        slug = _coinbase_slug(base)
+        if slug:
+            return f"https://www.coinbase.com/price/{slug}"
+    template = TRADE_URLS.get(config.EXCHANGE)
+    return template.format(base=base, quote=quote) if template else None
 
 
 def trade_button(symbol: str) -> dict | None:
