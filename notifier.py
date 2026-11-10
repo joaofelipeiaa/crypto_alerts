@@ -146,8 +146,11 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
     ]
     if candidate and candidate.get("aviso_atraso"):
         lines[3:3] = [f"⏰ <i>{esc(candidate['aviso_atraso'])}</i>"]
+    if candidate and candidate.get("rompimento"):
+        lines[0:0] = [f"🔔 {esc(candidate['rompimento'])}"]
     if candidate:
-        lines += ["", "<b>Gatilhos técnicos:</b> " + esc("; ".join(candidate["gatilhos"]))]
+        if not candidate.get("rompimento"):  # no rompimento, a linha 🔔 já explica
+            lines += ["", "<b>Gatilhos técnicos:</b> " + esc("; ".join(candidate["gatilhos"]))]
     if decision["motivos"]:
         lines += ["", "<b>Motivos:</b>"] + [f"• {rich(m)}" for m in decision["motivos"]]
     if decision["riscos"]:
@@ -168,7 +171,7 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
         if trigger.get("down"):
             parts.append(f"perder <code>{fmt_price(trigger['down'])}</code> "
                          f"({(trigger['down'] / price - 1) * 100:.1f}%)")
-        lines += ["", f"🔔 Reanaliso e aviso se {' ou '.join(parts)}"]
+        lines += ["", f"🔔 Reanaliso se {' ou '.join(parts)} (aviso se virar compra ou venda)"]
     footer = f"Perfil {perfil} · " if perfil else ""
     lines += ["", f"<i>{esc(footer)}Sinal automatizado, não é recomendação financeira.</i>"]
     return "\n".join(lines)

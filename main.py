@@ -56,6 +56,23 @@ def in_cooldown(symbol: str, candle_ts: pd.Timestamp) -> bool:
     return (candle_ts - pd.Timestamp(last)).total_seconds() < config.COOLDOWN_CANDLES * TF_SECONDS
 
 
+def history_for_ai(symbol: str, price: float) -> list[dict]:
+    """Análises anteriores do ativo, com quanto o preço andou desde cada uma."""
+    out = []
+    for r in paper.recent_analyses(symbol):
+        item = {
+            "quando": notifier.fmt_time(pd.Timestamp(r["created_at"])),
+            "origem": r["source"], "acao": r["acao"], "confianca": r["confianca"], "vies": r["vies"],
+            "preco_na_epoca": r["preco"],
+            "variacao_desde_entao_pct": round((price / r["preco"] - 1) * 100, 2) if r["preco"] else None,
+            "resumo": (r["resumo"] or "")[:300],
+        }
+        if r["gatilho_alta"] or r["gatilho_baixa"]:
+            item["gatilhos_marcados"] = {"alta": r["gatilho_alta"], "baixa": r["gatilho_baixa"]}
+        out.append(item)
+    return out
+
+
 def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str) -> dict | None:
     """Consulta a IA, envia o alerta, atualiza o paper trading, salva o sinal e os gatilhos.
 
@@ -78,7 +95,8 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     except Exception as e:  # noqa: BLE001
         log.warning("%s: sem preço ao vivo (%s), usando o fechamento", symbol, e)
         price = snap["preco"]
-    decision = agent.analyze(symbol, config.TIMEFRAME, snap, market.fear_greed(), candidate, position, perfil)
+    decision = agent.analyze(symbol, config.TIMEFRAME, snap, market.fear_greed(), candidate, position, perfil,
+                             historico=history_for_ai(symbol, price))
     if not decision:
         if source == "manual":
             notifier.send("A IA não conseguiu concluir a análise agora. Veja os logs.")
@@ -94,7 +112,7 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
 
     actionable = (source != "manual" and decision["acao"] in ("COMPRA", "VENDA")
                   and paper.confidence_ok(decision["confianca"]))
-    alerted = source in ("manual", "gatilho") or actionable or config.SEND_REJECTED
+    alerted = source == "manual" or actionable or config.SEND_REJECTED
     if alerted:
         notifier.send(notifier.format_decision(symbol, price, decision, candidate, perfil, trigger,
                                                dex=bool(paper.get_dex(symbol))),
@@ -175,10 +193,9 @@ def check_trigger(symbol: str, df: pd.DataFrame) -> dict | None:
                      f"{notifier.fmt_time(OFFLINE[1], with_date=False)})")
         late += ". O preço pode já ter se acomodado depois disso."
         gatilho += f" por volta de {notifier.fmt_time(crossed)} (horário local, há ~{hours:.0f}h)"
-    notifier.send(f"🔔 <b>{esc(symbol)} {word} {fmt_price(level)}</b> (agora {fmt_price(price)}), "
-                  f"{origin_txt}{when}. Analisando...\n🕒 {notifier.fmt_time()}",
-                  buttons=notifier.trade_button(symbol))
-    cand = {"direcao": direction, "contrarios": [], "gatilhos": [gatilho]}
+    log.info("%s %s %s (agora %s), %s%s", symbol, word, level, price, origin_txt, when)
+    cand = {"direcao": direction, "contrarios": [], "gatilhos": [gatilho],
+            "rompimento": f"{symbol} {word} {fmt_price(level)} ({origin_txt}){when}"}
     if late:
         cand["aviso_atraso"] = late
     return cand
@@ -241,9 +258,7 @@ def detect_offline() -> None:
     OFFLINE = (pd.Timestamp(last), now)
     hours = (now - OFFLINE[0]).total_seconds() / 3600
     log.warning("Bot ficou parado de %s a %s (%.1fh)", OFFLINE[0], now, hours)
-    notifier.send(f"⏰ O bot ficou parado de {notifier.fmt_time(OFFLINE[0])} a {notifier.fmt_time(now)} "
-                  f"(~{hours:.0f}h, computador desligado ou suspenso). Alertas a seguir podem se referir "
-                  "a movimentos desse intervalo: confira o horário em cada um.")
+    # sem mensagem própria: os alertas afetados já trazem o aviso ⏰ com o horário do movimento
 
 
 def run_cycle() -> None:

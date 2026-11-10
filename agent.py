@@ -46,6 +46,9 @@ Regras gerais:
 - Se o sinal candidato tiver "aviso_atraso", o rompimento aconteceu há horas (o bot estava parado): não
   reaja ao rompimento em si; avalie o cenário de AGORA (o preço pode já ter se estabilizado ou revertido)
   e diga isso no resumo.
+- suas_analises_anteriores traz o que você mesmo disse sobre este ativo e o que o preço fez depois
+  (variacao_desde_entao_pct). Mantenha coerência: se mudar de opinião, diga o que mudou. Se uma leitura
+  anterior errou (ex.: viés de alta e o preço caiu forte), reconheça e ajuste, sem repetir o erro.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
 
@@ -78,7 +81,8 @@ DECISION_SCHEMA = {
 
 
 def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
-            candidate: dict | None, open_position: dict | None, perfil: str = DEFAULT_PROFILE) -> dict | None:
+            candidate: dict | None, open_position: dict | None, perfil: str = DEFAULT_PROFILE,
+            historico: list[dict] | None = None) -> dict | None:
     payload = {
         "ativo": symbol,
         "timeframe": timeframe,
@@ -86,6 +90,7 @@ def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
         "posicao_simulada_aberta": open_position or "nenhuma",
         "fear_and_greed": sentiment or "indisponível",
         "dados_tecnicos": snapshot,
+        "suas_analises_anteriores": historico or "nenhuma nas últimas 72h",
     }
     params = {
         "model": config.OPENAI_MODEL,

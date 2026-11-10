@@ -202,6 +202,17 @@ def last_signal_candle(symbol: str) -> str | None:
     return row["candle_ts"] if row else None
 
 
+def recent_analyses(symbol: str, limit: int = 4, hours: int = 72) -> list[dict]:
+    """Últimas análises da IA para o ativo (mais antiga primeiro), para dar memória à próxima."""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+    with conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT created_at, source, acao, confianca, vies, preco, resumo, gatilho_alta, gatilho_baixa"
+            " FROM signals WHERE symbol=? AND acao IS NOT NULL AND created_at >= ?"
+            " ORDER BY id DESC LIMIT ?", (symbol, since, limit))]
+    return rows[::-1]
+
+
 def save_signal(symbol: str, candle_ts: str, candidate: dict | None, decision: dict | None,
                 price: float, alerted: bool, source: str = "auto") -> None:
     d = decision or {}
