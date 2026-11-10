@@ -95,8 +95,11 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     except Exception as e:  # noqa: BLE001
         log.warning("%s: sem preço ao vivo (%s), usando o fechamento", symbol, e)
         price = snap["preco"]
+    holders = paper.holders(symbol)
+    carteira = [{"nome": h["name"], "preco_medio": h["avg_price"],
+                 "resultado_atual_pct": round((price / h["avg_price"] - 1) * 100, 2)} for h in holders]
     decision = agent.analyze(symbol, config.TIMEFRAME, snap, market.fear_greed(), candidate, position, perfil,
-                             historico=history_for_ai(symbol, price))
+                             historico=history_for_ai(symbol, price), carteira=carteira)
     if not decision:
         if source == "manual":
             notifier.send("A IA não conseguiu concluir a análise agora. Veja os logs.")
@@ -112,10 +115,12 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
 
     actionable = (source != "manual" and decision["acao"] in ("COMPRA", "VENDA")
                   and paper.confidence_ok(decision["confianca"]))
-    alerted = source == "manual" or actionable or config.SEND_REJECTED
+    # VENDA só interessa a quem tem a moeda: sem ninguém na /carteira, não manda mensagem
+    worth_alert = actionable and (decision["acao"] == "COMPRA" or bool(holders))
+    alerted = source == "manual" or worth_alert or config.SEND_REJECTED
     if alerted:
         notifier.send(notifier.format_decision(symbol, price, decision, candidate, perfil, trigger,
-                                               dex=bool(paper.get_dex(symbol))),
+                                               dex=bool(paper.get_dex(symbol)), holders=holders),
                       buttons=notifier.trade_button(symbol))
 
     if actionable and decision["acao"] == "COMPRA" and not position:
@@ -170,6 +175,11 @@ def check_trigger(symbol: str, df: pd.DataFrame) -> dict | None:
     elif trig["down"] and price <= trig["down"]:
         level, direction, word = trig["down"], "VENDA", "perdeu"
     else:
+        return None
+    # numa queda (ou alta) contínua, cada análise marca um nível novo que é cruzado logo depois:
+    # no máximo uma análise por gatilho por moeda a cada TRIGGER_MIN_INTERVAL_MIN (o gatilho fica guardado)
+    last = paper.last_analysis_at(symbol, source="gatilho")
+    if last and pd.Timestamp.now(tz="UTC") - pd.Timestamp(last) < pd.Timedelta(minutes=config.TRIGGER_MIN_INTERVAL_MIN):
         return None
     paper.clear_trigger(symbol)
     if trig.get("origin") == "auto":
@@ -284,6 +294,9 @@ HELP = (
     "/desempenho — resultado do paper trading\n"
     "/placar — o que o preço fez depois das análises da IA\n"
     "/gatilhos — preços que disparam nova análise\n"
+    "/carteira — suas moedas (o VENDA só é avisado para quem tem a moeda)\n"
+    "/carteira ZCAT 0.0185 — registra que você tem ZCAT, com preço médio 0.0185\n"
+    "/carteira remover ZCAT — tira da sua carteira\n"
     "/perfil — perfil de risco atual\n"
     "🔒 /perfil moderado — troca o perfil (conservador, moderado, agressivo)\n"
     "🔒 /analise BTC — análise da IA agora (não abre operação)\n"
@@ -460,7 +473,69 @@ def is_admin(user_id) -> bool:
     return not config.TELEGRAM_ADMIN_IDS or str(user_id) in config.TELEGRAM_ADMIN_IDS
 
 
-def handle_command(text: str, user_id=None) -> None:
+def parse_number(s: str) -> float:
+    """Aceita 0.0185, 0,0185 e 1.234,56."""
+    s = s.strip()
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    return float(s)
+
+
+def cmd_wallet(args: list[str], user_id, name: str) -> None:
+    if not args:
+        items = paper.holdings_of(user_id)
+        if not items:
+            notifier.send("Sua carteira está vazia. Registre o que você tem, ex.: /carteira ZCAT 0.0185\n"
+                          "O bot passa a avisar VENDA dessas moedas e a IA considera o seu preço médio.")
+            return
+        lines = [f"<b>💼 Carteira de {esc(name)}</b>"]
+        for h in items:
+            try:
+                now = market.last_price(h["symbol"])
+                res = f"agora {fmt_price(now)} (<b>{(now / h['avg_price'] - 1) * 100:+.1f}%</b>)"
+            except Exception:  # noqa: BLE001
+                res = "preço indisponível"
+            lines.append(f"• {esc(h['symbol'])}: médio {fmt_price(h['avg_price'])}, {res}")
+        notifier.send("\n".join(lines))
+        return
+
+    if args[0].lower() in ("remover", "tirar", "vendi") and len(args) > 1:
+        symbol = resolve_symbol(args[1])
+        ok = paper.remove_holding(user_id, symbol)
+        notifier.send(f"🗑️ {esc(symbol)} saiu da sua carteira." if ok
+                      else f"{esc(symbol)} não estava na sua carteira. Veja /carteira")
+        return
+
+    if len(args) < 2:
+        notifier.send("Uso: /carteira ZCAT 0.0185  (moeda e preço médio de compra)")
+        return
+    symbol = resolve_symbol(args[0])
+    try:
+        avg = parse_number(args[1])
+        qty = parse_number(args[2]) if len(args) > 2 else None
+    except ValueError:
+        notifier.send("Não entendi o preço. Ex.: /carteira ZCAT 0.0185")
+        return
+    if avg <= 0:
+        notifier.send("O preço médio precisa ser maior que zero.")
+        return
+    if symbol not in paper.get_watchlist():
+        cmd_add([symbol])  # quem tem a moeda precisa que ela seja monitorada
+        if symbol not in paper.get_watchlist():
+            return
+    paper.set_holding(user_id, name, symbol, avg, qty)
+    msg = f"💼 Registrado: {esc(name)} tem {esc(symbol)} com preço médio {fmt_price(avg)}."
+    try:
+        now = market.last_price(symbol)
+        msg += f"\nAgora: {fmt_price(now)} ({(now / avg - 1) * 100:+.1f}%)."
+        if not 0.2 < now / avg < 5:
+            msg += "\n⚠️ O preço médio está muito longe do atual. Confira se não faltou ou sobrou um zero."
+    except Exception:  # noqa: BLE001
+        pass
+    notifier.send(msg + "\nVENDA dessa moeda passa a ser avisado, e a IA considera o seu preço médio.")
+
+
+def handle_command(text: str, user_id=None, name: str = "membro") -> None:
     parts = text.strip().split()
     cmd = parts[0].split("@")[0].lower()
 
@@ -525,6 +600,9 @@ def handle_command(text: str, user_id=None) -> None:
         lines += ["", "Veja também /placar"]
         notifier.send("\n".join(lines))
 
+    elif cmd == "/carteira":
+        cmd_wallet(parts[1:], user_id, name)
+
     elif cmd == "/analise":
         if len(parts) < 2:
             notifier.send("Uso: /analise BTC")
@@ -563,7 +641,7 @@ def poll_commands(offset: int | None, until: datetime) -> int | None:
                 continue
             if text.startswith("/"):
                 try:
-                    handle_command(text, user_id)
+                    handle_command(text, user_id, msg.get("from", {}).get("first_name") or "membro")
                 except Exception:
                     log.exception("Erro no comando %s", msg.get("text"))
                     notifier.send("Erro ao executar o comando. Veja os logs.")

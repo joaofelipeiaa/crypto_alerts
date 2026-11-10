@@ -134,7 +134,8 @@ def bias_label(v: int) -> str:
 
 
 def format_decision(symbol: str, price: float, decision: dict, candidate: dict | None,
-                    perfil: str | None = None, trigger: dict | None = None, dex: bool = False) -> str:
+                    perfil: str | None = None, trigger: dict | None = None, dex: bool = False,
+                    holders: list[dict] | None = None) -> str:
     icon = {"COMPRA": "🟢", "VENDA": "🔴", "AGUARDAR": "⚪"}[decision["acao"]]
     dex_tag = "  ·  ⚠️ DEX" if dex else ""
     lines = [
@@ -146,6 +147,12 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
     ]
     if candidate and candidate.get("aviso_atraso"):
         lines[3:3] = [f"⏰ <i>{esc(candidate['aviso_atraso'])}</i>"]
+    if holders:
+        who = ", ".join(
+            f'<a href="tg://user?id={esc(h["user_id"])}">{esc(h["name"] or "membro")}</a> '
+            f'(médio {fmt_price(h["avg_price"])}, {(price / h["avg_price"] - 1) * 100:+.1f}%)'
+            for h in holders)
+        lines[3:3] = [f"📌 Na carteira de: {who}"]
     if candidate and candidate.get("rompimento"):
         lines[0:0] = [f"🔔 {esc(candidate['rompimento'])}"]
     if candidate:

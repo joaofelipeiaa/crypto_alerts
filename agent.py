@@ -49,6 +49,17 @@ Regras gerais:
 - suas_analises_anteriores traz o que você mesmo disse sobre este ativo e o que o preço fez depois
   (variacao_desde_entao_pct). Mantenha coerência: se mudar de opinião, diga o que mudou. Se uma leitura
   anterior errou (ex.: viés de alta e o preço caiu forte), reconheça e ajuste, sem repetir o erro.
+- carteira_dos_membros diz quem do grupo tem o ativo de verdade, com preço médio e resultado atual.
+  VENDA só faz sentido para quem tem o ativo: se ninguém tem, nunca responda VENDA (use AGUARDAR
+  com viés negativo). Se alguém tem, considere o preço médio: proteger lucro, limitar prejuízo ou
+  segurar se a queda for ruído dentro do plano. Não recomende vender só porque caiu: diga se o
+  cenário piorou de verdade (suporte importante perdido com volume, tendência maior virando).
+- Sinal candidato com tipo "reversao_sobrevenda" é a compra "no fundo" depois que a queda mostrou
+  perda de força. Pode ser COMPRA mesmo contra a tendência maior (no perfil conservador, só se o
+  tempo gráfico maior também mostrar a queda perdendo força), com stop logo abaixo de minima_recente
+  (no máximo ~1,5 ATR do preço) e alvo na EMA21/EMA50 ou resistência próxima, risco/retorno >= 1,5.
+  Recuse se a vela de reversão for fraca, sem volume, ou se houver notícia muito negativa. Em queda
+  forte no tempo gráfico maior, essas compras falham na maioria das vezes: só aprove com assimetria clara.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
 
@@ -82,7 +93,7 @@ DECISION_SCHEMA = {
 
 def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
             candidate: dict | None, open_position: dict | None, perfil: str = DEFAULT_PROFILE,
-            historico: list[dict] | None = None) -> dict | None:
+            historico: list[dict] | None = None, carteira: list[dict] | None = None) -> dict | None:
     payload = {
         "ativo": symbol,
         "timeframe": timeframe,
@@ -91,6 +102,7 @@ def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
         "fear_and_greed": sentiment or "indisponível",
         "dados_tecnicos": snapshot,
         "suas_analises_anteriores": historico or "nenhuma nas últimas 72h",
+        "carteira_dos_membros": carteira or "ninguém do grupo tem este ativo",
     }
     params = {
         "model": config.OPENAI_MODEL,

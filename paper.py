@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS dex_tokens (
     name TEXT,
     added_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS holdings (
+    user_id TEXT NOT NULL,     -- quem do grupo tem a moeda (de verdade, fora da simulação)
+    name TEXT,
+    symbol TEXT NOT NULL,
+    avg_price REAL NOT NULL,   -- preço médio de compra
+    qty REAL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, symbol)
+);
 CREATE TABLE IF NOT EXISTS triggers (
     symbol TEXT PRIMARY KEY,
     up REAL,
@@ -119,6 +128,32 @@ def get_meta(key: str) -> str | None:
 def set_meta(key: str, value: str) -> None:
     with conn() as c:
         c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
+
+# ---------- carteira real dos membros ----------
+
+def set_holding(user_id, name: str, symbol: str, avg_price: float, qty: float | None = None) -> None:
+    with conn() as c:
+        c.execute("INSERT OR REPLACE INTO holdings (user_id, name, symbol, avg_price, qty, added_at) "
+                  "VALUES (?,?,?,?,?,?)", (str(user_id), name, symbol, avg_price, qty, _now()))
+
+
+def remove_holding(user_id, symbol: str) -> bool:
+    with conn() as c:
+        return c.execute("DELETE FROM holdings WHERE user_id=? AND symbol=?",
+                         (str(user_id), symbol)).rowcount > 0
+
+
+def holdings_of(user_id) -> list[dict]:
+    with conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM holdings WHERE user_id=? ORDER BY symbol",
+                                           (str(user_id),))]
+
+
+def holders(symbol: str) -> list[dict]:
+    """Membros do grupo que têm a moeda."""
+    with conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM holdings WHERE symbol=? ORDER BY name", (symbol,))]
 
 
 # ---------- tokens de DEX ----------
@@ -230,11 +265,14 @@ def save_signal(symbol: str, candle_ts: str, candidate: dict | None, decision: d
 
 # ---------- gatilhos de preço ----------
 
-def last_analysis_at(symbol: str) -> datetime | None:
-    """Quando a IA analisou a moeda pela última vez (qualquer origem)."""
+def last_analysis_at(symbol: str, source: str | None = None) -> datetime | None:
+    """Quando a IA analisou a moeda pela última vez (de qualquer origem, ou só da origem indicada)."""
+    sql, args = "SELECT created_at FROM signals WHERE symbol=?", [symbol]
+    if source:
+        sql += " AND source=?"
+        args.append(source)
     with conn() as c:
-        row = c.execute("SELECT created_at FROM signals WHERE symbol=? ORDER BY id DESC LIMIT 1",
-                        (symbol,)).fetchone()
+        row = c.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
     return datetime.fromisoformat(row["created_at"]) if row else None
 
 

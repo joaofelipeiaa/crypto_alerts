@@ -2,8 +2,35 @@
 import pandas as pd
 
 
+def oversold_reversal(df: pd.DataFrame, lookback: int = 8) -> dict | None:
+    """'Comprar baixo' com confirmação: houve sobrevenda nas últimas velas e a vela atual reagiu forte.
+
+    Em vez de comprar enquanto o preço ainda cai (faca caindo), espera a queda mostrar perda de força:
+    vela de alta que fecha acima da máxima da anterior e da EMA9, RSI de volta acima de 40, volume
+    na média ou acima, e sem nova mínima. Regra propositalmente rígida: no teste de nov/2026 (5 dias
+    de queda), a versão frouxa dava ~300 sinais com 69% de quedas depois.
+    """
+    cur, prev = df.iloc[-1], df.iloc[-2]
+    recent = df.iloc[-1 - lookback:-1]
+    swing_low = float(recent["low"].min())
+    ok = (recent["rsi"].min() < 30 and cur["close"] > cur["open"] and cur["close"] > prev["high"]
+          and cur["close"] > cur["ema9"] and cur["rsi"] >= 40 and cur["vol_ratio"] >= 1.0
+          and cur["low"] > swing_low)
+    if not ok:
+        return None
+    gatilhos = [f"Reversão de sobrevenda: RSI saiu de {recent['rsi'].min():.1f} para {cur['rsi']:.1f}, "
+                "vela de alta fechando acima da máxima anterior e da EMA9, sem nova mínima",
+                f"Mínima recente (referência para o stop): {swing_low:.6g}",
+                f"Volume da vela: {cur['vol_ratio']:.1f}x a média"]
+    return {"direcao": "COMPRA", "tipo": "reversao_sobrevenda", "gatilhos": gatilhos,
+            "contrarios": [], "minima_recente": swing_low}
+
+
 def find_candidate(df: pd.DataFrame) -> dict | None:
     """Retorna {'direcao': 'COMPRA'|'VENDA', 'gatilhos': [...]} ou None."""
+    reversal = oversold_reversal(df)
+    if reversal:
+        return reversal
     cur, prev = df.iloc[-1], df.iloc[-2]
     buy, sell = [], []
 

@@ -84,6 +84,7 @@ journalctl --user -u crypto-alerts -f # logs
 | `/desempenho` | taxa de acerto e resultado total do paper trading |
 | `/placar` | o que o preço fez 24h/72h depois das análises (aprovadas × descartadas, viés) |
 | `/gatilhos` | preços que disparam uma nova análise |
+| `/carteira` | suas moedas reais; `/carteira ZCAT 0.0185` registra (preço médio), `/carteira remover ZCAT` tira |
 | `/perfil` | perfil de risco atual; `/perfil moderado` troca (admin) |
 | `/analise BTC` | análise da IA na hora (não abre operação; admin) |
 | `/moedas` | ativos monitorados |
@@ -96,6 +97,16 @@ A lista de moedas fica salva no banco (`crypto_alerts.db`). O `SYMBOLS` do `.env
 lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. Máximo de 30 moedas.
 
 ## Viés, gatilhos, placar e perfis
+
+- **Carteira** (`/carteira`): cada membro registra as moedas que tem e o preço médio. VENDA só é avisado
+  para moedas que alguém tem (a mensagem marca quem), e a IA considera o preço médio de cada um.
+  Para quem não tem a moeda, VENDA não serve para nada e fica em silêncio.
+- **Compra na reversão**: além dos sinais comuns, a triagem procura a "compra no fundo" com
+  confirmação: sobrevenda recente e uma vela de alta forte, que fecha acima da máxima anterior e da
+  EMA9, sem fazer nova mínima. A IA decide, com stop logo abaixo da mínima recente. Em tendência de baixa
+  forte essas compras falham com frequência: o `/placar` e o `/desempenho` mostram se estão valendo a pena.
+- **Limite de gatilhos**: no máximo uma análise por gatilho por moeda a cada
+  `TRIGGER_MIN_INTERVAL_MIN` (60 min), para não perseguir uma queda contínua.
 
 - **Viés** (-100 a +100): toda análise diz para que lado o ativo está inclinado, mesmo quando a decisão é AGUARDAR.
 - **Gatilhos**: a IA marca um preço acima (confirmação de alta) e outro abaixo (piora do cenário).
