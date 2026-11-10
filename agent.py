@@ -1,10 +1,12 @@
 """Agente de IA (OpenAI) que valida ou descarta o sinal candidato."""
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 import openai
 
 import config
+import paper
 from profiles import DEFAULT_PROFILE, PROFILES
 
 log = logging.getLogger(__name__)
@@ -93,7 +95,26 @@ DECISION_SCHEMA = {
 
 def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
             candidate: dict | None, open_position: dict | None, perfil: str = DEFAULT_PROFILE,
-            historico: list[dict] | None = None, carteira: list[dict] | None = None) -> dict | None:
+            historico: list[dict] | None = None, carteira: list[dict] | None = None,
+            source: str = "auto") -> dict | None:
+    manual = source == "manual"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    calls_key = f"ai_calls:{today}"
+    calls = int(paper.get_meta(calls_key) or 0)
+    if not manual and config.MAX_AI_CALLS_DAY and calls >= config.MAX_AI_CALLS_DAY:
+        log.warning("Limite diário de %d análises da IA atingido; %s ignorado", config.MAX_AI_CALLS_DAY, symbol)
+        return None
+
+    # notícias: busca na web no máximo a cada NEWS_CACHE_HOURS por ativo (a busca é o que mais custa)
+    news_key = f"news:{symbol}"
+    cached = None
+    try:
+        cached = json.loads(paper.get_meta(news_key) or "null")
+    except json.JSONDecodeError:
+        pass
+    fresh = bool(cached) and (datetime.now(timezone.utc) - datetime.fromisoformat(cached["at"])
+                              < timedelta(hours=config.NEWS_CACHE_HOURS))
+    search = config.AI_WEB_SEARCH and (manual or not fresh)
     payload = {
         "ativo": symbol,
         "timeframe": timeframe,
@@ -104,6 +125,10 @@ def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
         "suas_analises_anteriores": historico or "nenhuma nas últimas 72h",
         "carteira_dos_membros": carteira or "ninguém do grupo tem este ativo",
     }
+    if config.AI_WEB_SEARCH and not search:
+        payload["noticias_ja_pesquisadas"] = {
+            "pesquisadas_em": cached["at"], "itens": cached["noticias"] or ["nada relevante encontrado"],
+            "obs": "busca na web desligada nesta análise para economizar; use estas notícias"}
     params = {
         "model": config.OPENAI_MODEL,
         "instructions": SYSTEM_PROMPT.format(perfil=perfil, regras=PROFILES[perfil]["rules"],
@@ -114,7 +139,7 @@ def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
                             "schema": DECISION_SCHEMA, "strict": True}},
         "max_output_tokens": 16000,
     }
-    if config.AI_WEB_SEARCH:
+    if search:
         params["tools"] = [{"type": "web_search"}]
     if config.OPENAI_REASONING_EFFORT:
         params["reasoning"] = {"effort": config.OPENAI_REASONING_EFFORT}
@@ -131,12 +156,19 @@ def analyze(symbol: str, timeframe: str, snapshot: dict, sentiment: dict | None,
         log.error("Sem conexão com a API da OpenAI")
         return None
 
+    paper.set_meta(calls_key, str(calls + 1))
+    u = resp.usage
+    log.info("IA %s (%s): %d tokens entrada, %d saída, busca na web: %s, análises hoje: %d", symbol, source,
+             u.input_tokens if u else 0, u.output_tokens if u else 0, "sim" if search else "cache", calls + 1)
     if resp.status != "completed":
         log.error("Resposta incompleta da IA para %s: %s", symbol, resp.incomplete_details)
         return None
     try:
         decision = json.loads(resp.output_text)
         decision["vies"] = max(-100, min(100, int(decision.get("vies", 0))))
+        if search:
+            paper.set_meta(news_key, json.dumps({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                 "noticias": decision.get("noticias", [])}, ensure_ascii=False))
         return decision
     except json.JSONDecodeError:
         log.error("IA não retornou JSON válido para %s (possível recusa): %r", symbol, resp.output_text[:300])

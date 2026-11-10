@@ -44,7 +44,9 @@ TRIGGER_TTL_HOURS = int(_get("TRIGGER_TTL_HOURS", "48"))  # validade dos gatilho
 AUTO_TRIGGERS = _get("AUTO_TRIGGERS", "true").lower() == "true"
 AUTO_TRIGGER_HOURS = int(_get("AUTO_TRIGGER_HOURS", "6"))  # recalcula a faixa a cada N horas
 # Intervalo mínimo entre análises disparadas por gatilho na mesma moeda (evita perseguir uma queda)
-TRIGGER_MIN_INTERVAL_MIN = int(_get("TRIGGER_MIN_INTERVAL_MIN", "60"))
+TRIGGER_MIN_INTERVAL_MIN = int(_get("TRIGGER_MIN_INTERVAL_MIN", "120"))
+NEWS_CACHE_HOURS = float(_get("NEWS_CACHE_HOURS", "6"))
+MAX_AI_CALLS_DAY = int(_get("MAX_AI_CALLS_DAY", "40"))
 COOLDOWN_CANDLES = int(_get("COOLDOWN_CANDLES", "4"))  # velas sem reanalisar o mesmo ativo
 SEND_REJECTED = _get("SEND_REJECTED", "false").lower() == "true"  # avisar quando a IA descarta
 

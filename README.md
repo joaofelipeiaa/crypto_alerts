@@ -106,7 +106,7 @@ lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. M�
   EMA9, sem fazer nova mínima. A IA decide, com stop logo abaixo da mínima recente. Em tendência de baixa
   forte essas compras falham com frequência: o `/placar` e o `/desempenho` mostram se estão valendo a pena.
 - **Limite de gatilhos**: no máximo uma análise por gatilho por moeda a cada
-  `TRIGGER_MIN_INTERVAL_MIN` (60 min), para não perseguir uma queda contínua.
+  `TRIGGER_MIN_INTERVAL_MIN` (120 min), para não perseguir uma queda contínua.
 
 - **Viés** (-100 a +100): toda análise diz para que lado o ativo está inclinado, mesmo quando a decisão é AGUARDAR.
 - **Gatilhos**: a IA marca um preço acima (confirmação de alta) e outro abaixo (piora do cenário).
@@ -157,8 +157,11 @@ timeframe, intervalo, confiança mínima, cooldown, valor por operação simulad
 
 ## Custos
 - Dados da Coinbase (públicos), Telegram e Fear & Greed: grátis.
-- IA: paga por análise, e só roda quando há sinal candidato. Para reduzir o custo, use um modelo
-  menor, `OPENAI_REASONING_EFFORT=low`, `AI_WEB_SEARCH=false` ou aumente `COOLDOWN_CANDLES`.
+- IA: paga por análise, e só roda quando há sinal candidato ou gatilho. A busca de notícias na web é a
+  parte mais cara: ela roda no máximo a cada `NEWS_CACHE_HOURS` (6h) por moeda, e nas outras análises a IA
+  reaproveita as notícias já encontradas (cerca de 1/4 dos tokens). `MAX_AI_CALLS_DAY` (40) é o teto de
+  análises automáticas por dia (`/analise` sempre busca e não conta no teto). O log mostra os tokens de
+  cada análise. Para reduzir mais: menos moedas, `AI_WEB_SEARCH=false` ou aumente `COOLDOWN_CANDLES`.
 
 ## Segurança
 - **Nunca** suba o `.env` (já está no `.gitignore`). Ele contém o token do bot e a chave da OpenAI.

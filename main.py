@@ -99,7 +99,8 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     carteira = [{"nome": h["name"], "preco_medio": h["avg_price"],
                  "resultado_atual_pct": round((price / h["avg_price"] - 1) * 100, 2)} for h in holders]
     decision = agent.analyze(symbol, config.TIMEFRAME, snap, market.fear_greed(), candidate, position, perfil,
-                             historico=history_for_ai(symbol, price), carteira=carteira)
+                             historico=history_for_ai(symbol, price), carteira=carteira,
+                             source=source)
     if not decision:
         if source == "manual":
             notifier.send("A IA não conseguiu concluir a análise agora. Veja os logs.")
