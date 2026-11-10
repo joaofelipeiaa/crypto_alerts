@@ -21,6 +21,8 @@ log = logging.getLogger("crypto_alerts")
 TF_SECONDS = ccxt.Exchange.parse_timeframe(config.TIMEFRAME)
 EVAL_EVERY_MIN = 30
 _last_eval = 0.0
+# (início, fim) do último período em que o bot ficou parado (PC suspenso/desligado), ou None
+OFFLINE: tuple[pd.Timestamp, pd.Timestamp] | None = None
 
 
 def check_positions(symbol: str, df: pd.DataFrame) -> None:
@@ -132,7 +134,14 @@ def ensure_auto_trigger(symbol: str, df: pd.DataFrame) -> None:
                  symbol, ctx["timeframe"], trig["up"], trig["down"])
 
 
-def check_trigger(symbol: str) -> dict | None:
+def cross_time(df: pd.DataFrame, since: str, level: float, up: bool) -> pd.Timestamp | None:
+    """Abertura da primeira vela (depois de 'since') que tocou o nível. None = só na vela atual."""
+    after = df[df["ts"] >= pd.Timestamp(since)]
+    hit = after[after["high"] >= level] if up else after[after["low"] <= level]
+    return hit.iloc[0]["ts"] if len(hit) else None
+
+
+def check_trigger(symbol: str, df: pd.DataFrame) -> dict | None:
     """Se o preço cruzou um gatilho salvo, retorna o sinal candidato correspondente."""
     trig = paper.get_trigger(symbol)
     if not trig:
@@ -153,10 +162,26 @@ def check_trigger(symbol: str) -> dict | None:
     else:
         origin_txt = "nível marcado na análise anterior"
         gatilho = f"Preço {word} o nível {fmt_price(level)} definido como gatilho na análise anterior"
+    # quando o nível foi cruzado: se faz tempo (bot parado), o alerta é sobre um movimento antigo
+    crossed = cross_time(df, trig["created_at"], level, direction == "COMPRA")
+    now = pd.Timestamp.now(tz="UTC")
+    when, late = "", None
+    if crossed is not None and now - crossed > pd.Timedelta(seconds=2 * TF_SECONDS):
+        hours = (now - crossed).total_seconds() / 3600
+        when = f" · cruzou por volta de {notifier.fmt_time(crossed)} (há ~{hours:.0f}h)"
+        late = f"Movimento de {notifier.fmt_time(crossed)}, há ~{hours:.0f}h"
+        if OFFLINE and crossed < OFFLINE[1]:
+            late += (f", enquanto o bot estava parado ({notifier.fmt_time(OFFLINE[0])} a "
+                     f"{notifier.fmt_time(OFFLINE[1], with_date=False)})")
+        late += ". O preço pode já ter se acomodado depois disso."
+        gatilho += f" por volta de {notifier.fmt_time(crossed)} (horário local, há ~{hours:.0f}h)"
     notifier.send(f"🔔 <b>{esc(symbol)} {word} {fmt_price(level)}</b> (agora {fmt_price(price)}), "
-                  f"{origin_txt}. Analisando...",
+                  f"{origin_txt}{when}. Analisando...\n🕒 {notifier.fmt_time()}",
                   buttons=notifier.trade_button(symbol))
-    return {"direcao": direction, "contrarios": [], "gatilhos": [gatilho]}
+    cand = {"direcao": direction, "contrarios": [], "gatilhos": [gatilho]}
+    if late:
+        cand["aviso_atraso"] = late
+    return cand
 
 
 def run_symbol(symbol: str) -> None:
@@ -164,7 +189,7 @@ def run_symbol(symbol: str) -> None:
     check_positions(symbol, df)
     ensure_auto_trigger(symbol, df)
 
-    trigger_candidate = check_trigger(symbol)
+    trigger_candidate = check_trigger(symbol, df)
     if trigger_candidate:
         log.info("%s: gatilho de preço atingido. Consultando IA...", symbol)
         evaluate(symbol, df, trigger_candidate, "gatilho")
@@ -203,7 +228,26 @@ def evaluate_pending() -> None:
             paper.set_evaluation(s["id"], hours, ret)
 
 
+def detect_offline() -> None:
+    """Percebe se o bot ficou parado (PC suspenso/desligado) desde o último ciclo e avisa uma vez."""
+    global OFFLINE
+    now = pd.Timestamp.now(tz="UTC")
+    last = paper.get_meta("last_cycle")
+    paper.set_meta("last_cycle", now.isoformat())
+    gap_limit = pd.Timedelta(minutes=max(15, 3 * config.CHECK_INTERVAL_MIN))
+    if not last or now - pd.Timestamp(last) <= gap_limit:
+        OFFLINE = None
+        return
+    OFFLINE = (pd.Timestamp(last), now)
+    hours = (now - OFFLINE[0]).total_seconds() / 3600
+    log.warning("Bot ficou parado de %s a %s (%.1fh)", OFFLINE[0], now, hours)
+    notifier.send(f"⏰ O bot ficou parado de {notifier.fmt_time(OFFLINE[0])} a {notifier.fmt_time(now)} "
+                  f"(~{hours:.0f}h, computador desligado ou suspenso). Alertas a seguir podem se referir "
+                  "a movimentos desse intervalo: confira o horário em cada um.")
+
+
 def run_cycle() -> None:
+    detect_offline()
     for symbol in paper.get_watchlist():
         try:
             run_symbol(symbol)

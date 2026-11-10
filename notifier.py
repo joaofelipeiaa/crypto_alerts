@@ -4,9 +4,14 @@ import json
 import re
 import logging
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import requests
 
 import config
+
+TZ = ZoneInfo(config.TIMEZONE)
 
 log = logging.getLogger(__name__)
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -111,6 +116,12 @@ def rich(s) -> str:
     return "".join(out)
 
 
+def fmt_time(dt: datetime | None = None, with_date: bool = True) -> str:
+    """Horário local para as mensagens (ex.: 10/11 08:31)."""
+    dt = (dt or datetime.now(TZ)).astimezone(TZ)
+    return dt.strftime("%d/%m %H:%M" if with_date else "%H:%M")
+
+
 def fmt_price(p: float) -> str:
     return f"{p:,.2f}" if p >= 1 else f"{p:.6f}"
 
@@ -128,11 +139,13 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
     dex_tag = "  ·  ⚠️ DEX" if dex else ""
     lines = [
         f"{icon} <b>{decision['acao']} {esc(symbol)}</b>  ·  confiança <b>{esc(decision['confianca'])}</b>{dex_tag}",
-        f"Preço: <code>{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}",
+        f"Preço: <code>{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}  ·  🕒 {fmt_time()}",
         f"Viés: <b>{bias_label(decision.get('vies', 0))}</b>",
         "",
         rich(decision["resumo"]),
     ]
+    if candidate and candidate.get("aviso_atraso"):
+        lines[3:3] = [f"⏰ <i>{esc(candidate['aviso_atraso'])}</i>"]
     if candidate:
         lines += ["", "<b>Gatilhos técnicos:</b> " + esc("; ".join(candidate["gatilhos"]))]
     if decision["motivos"]:

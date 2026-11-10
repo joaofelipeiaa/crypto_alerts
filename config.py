@@ -55,4 +55,6 @@ DEX_FEE_PCT = float(_get("DEX_FEE_PCT", "2.0"))  # taxa + slippage por lado ao c
 PAPER_TRADE_USD = float(_get("PAPER_TRADE_USD", "100"))
 PAPER_FEE_PCT = float(_get("PAPER_FEE_PCT", "0.6"))  # taxa por lado (Coinbase taker ~0.6%)
 
+TIMEZONE = _get("TIMEZONE", "America/Sao_Paulo")  # fuso dos horários nas mensagens
+
 DB_PATH = BASE_DIR / _get("DB_FILE", "crypto_alerts.db")

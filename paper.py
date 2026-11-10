@@ -108,6 +108,19 @@ def conn() -> sqlite3.Connection:
     return c
 
 
+# ---------- meta (chave/valor) ----------
+
+def get_meta(key: str) -> str | None:
+    with conn() as c:
+        row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_meta(key: str, value: str) -> None:
+    with conn() as c:
+        c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
+
 # ---------- tokens de DEX ----------
 
 def add_dex(info: dict) -> None:

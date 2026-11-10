@@ -43,6 +43,9 @@ Regras gerais:
 - Se houver dados_tecnicos.token_de_dex, é um token pequeno negociado em DEX: liquidez baixa, fácil de
   manipular, risco de golpe e custo de ~{dex_fee}% por lado. Exija confirmação mais forte, cite esses
   riscos e lembre que o alvo precisa cobrir as taxas. Desconfie de picos de volume isolados.
+- Se o sinal candidato tiver "aviso_atraso", o rompimento aconteceu há horas (o bot estava parado): não
+  reaja ao rompimento em si; avalie o cenário de AGORA (o preço pode já ter se estabilizado ou revertido)
+  e diga isso no resumo.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
 
