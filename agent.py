@@ -64,6 +64,7 @@ Regras gerais:
   forte no tempo gráfico maior, essas compras falham na maioria das vezes: só aprove com assimetria clara.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
+  Traduza tudo que vier das notícias: nada em outro idioma ou alfabeto (ex.: "US$ 30 milhões", nunca "млн" ou "M").
 
 Perfil de risco atual: {perfil}
 {regras}"""
