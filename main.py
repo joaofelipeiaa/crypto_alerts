@@ -95,6 +95,10 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     except Exception as e:  # noqa: BLE001
         log.warning("%s: sem preço ao vivo (%s), usando o fechamento", symbol, e)
         price = snap["preco"]
+    # alvo precisa pagar as taxas de ida e volta com folga
+    fee_rt = 2 * paper.fee_pct(symbol)
+    min_target_pct = round(config.MIN_TARGET_FEE_MULT * fee_rt, 2)
+    snap["custos_operacao"] = {"taxa_ida_e_volta_pct": fee_rt, "alvo_minimo_pct": min_target_pct}
     holders = paper.holders(symbol)
     carteira = [{"nome": h["name"], "preco_medio": h["avg_price"],
                  "resultado_atual_pct": round((price / h["avg_price"] - 1) * 100, 2)} for h in holders]
@@ -110,9 +114,25 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
 
     log.info("%s [%s]: IA decidiu %s (confiança %s, viés %+d)", symbol, source,
              decision["acao"], decision["confianca"], decision["vies"])
+    if decision["acao"] == "COMPRA":
+        alvo_pct = (decision["alvo"] / price - 1) * 100 if decision["alvo"] else 0.0
+        if alvo_pct < min_target_pct:
+            log.info("%s: COMPRA descartada, alvo +%.2f%% abaixo do mínimo +%.2f%%", symbol, alvo_pct, min_target_pct)
+            decision["acao"] = "AGUARDAR"
+            decision["resumo"] = (f"Compra descartada: alvo de {alvo_pct:+.1f}% não cobre as taxas "
+                                  f"(mínimo +{min_target_pct:.1f}%). " + decision["resumo"])
+
     # gatilho colado no preço dispara com ruído; exige distância mínima de meio ATR (e 0,5%)
     min_dist = max(0.5 * snap["atr"], 0.005 * price)
-    trigger = paper.set_trigger(symbol, price, decision["gatilho_alta"], decision["gatilho_baixa"], min_dist)
+    # com compra aberta, o stop é o plano: o gatilho de baixa não pode ficar acima dele
+    opens = (source != "manual" and decision["acao"] == "COMPRA" and not position
+             and paper.confidence_ok(decision["confianca"]))
+    stop = decision["stop_loss"] if opens else (position or {}).get("stop_loss")
+    down = decision["gatilho_baixa"]
+    if stop and down and down > stop:
+        log.info("%s: gatilho de baixa %s acima do stop %s; usando o stop", symbol, down, stop)
+        down = stop
+    trigger = paper.set_trigger(symbol, price, decision["gatilho_alta"], down, min_dist)
 
     actionable = (source != "manual" and decision["acao"] in ("COMPRA", "VENDA")
                   and paper.confidence_ok(decision["confianca"]))

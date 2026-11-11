@@ -62,6 +62,11 @@ Regras gerais:
   (no máximo ~1,5 ATR do preço) e alvo na EMA21/EMA50 ou resistência próxima, risco/retorno >= 1,5.
   Recuse se a vela de reversão for fraca, sem volume, ou se houver notícia muito negativa. Em queda
   forte no tempo gráfico maior, essas compras falham na maioria das vezes: só aprove com assimetria clara.
+- dados_tecnicos.custos_operacao traz a taxa de ida e volta e o alvo_minimo_pct. COMPRA só com alvo
+  pelo menos alvo_minimo_pct acima do preço; se o alvo realista (resistência próxima) for menor, AGUARDAR.
+- Se posicao_simulada_aberta tiver stop_loss, esse é o plano da compra: não responda VENDA com o preço
+  acima do stop, a não ser por fato novo e forte (notícia grave, hack, queda brusca com volume muito alto);
+  oscilação contra a posição é esperada. gatilho_baixa nunca acima desse stop.
 - Seja honesto sobre a incerteza. Nunca prometa resultado.
 - Escreva em português do Brasil, de forma direta e curta (é uma mensagem de celular).
   Traduza tudo que vier das notícias: nada em outro idioma ou alfabeto (ex.: "US$ 30 milhões", nunca "млн" ou "M").

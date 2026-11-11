@@ -108,6 +108,11 @@ lista inicial, usada na primeira execução; depois disso, gerencie pelo bot. M�
 - **Limite de gatilhos**: no máximo uma análise por gatilho por moeda a cada
   `TRIGGER_MIN_INTERVAL_MIN` (120 min), para não perseguir uma queda contínua.
 
+- **Alvo mínimo**: uma COMPRA só é aprovada se o alvo for pelo menos `MIN_TARGET_FEE_MULT` (2) vezes a taxa de
+  ida e volta (com `PAPER_FEE_PCT=0.6`: alvo de +2,4% ou mais). Alvos menores viram AGUARDAR: não pagam as taxas.
+- **Stop é o plano**: com uma compra aberta, o gatilho de baixa nunca fica acima do stop, e a IA não manda
+  VENDA antes do stop sem um fato novo forte. Evita comprar no rompimento e vender na primeira oscilação.
+
 - **Viés** (-100 a +100): toda análise diz para que lado o ativo está inclinado, mesmo quando a decisão é AGUARDAR.
 - **Gatilhos**: a IA marca um preço acima (confirmação de alta) e outro abaixo (piora do cenário).
   Se o preço cruzar um deles, o bot reanalisa na hora. Só avisa se a nova análise der COMPRA ou VENDA
