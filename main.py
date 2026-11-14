@@ -675,13 +675,19 @@ def main() -> None:
              config.EXCHANGE, config.TIMEFRAME, symbols, config.CHECK_INTERVAL_MIN, paper.get_profile())
     notifier.send(f"🤖 Monitor de cripto iniciado\n{esc(', '.join(symbols))} · {esc(config.TIMEFRAME)} · "
                   f"perfil {esc(paper.get_profile())}\nEnvie /ajuda para ver os comandos.")
-    offset = None
-    for upd in notifier.get_updates(None, timeout=0):  # ignora comandos antigos
-        offset = upd["update_id"] + 1
+    saved = paper.get_meta("telegram_offset")
+    if saved:
+        offset: int | None = int(saved)
+    else:
+        offset = None
+        for upd in notifier.get_updates(None, timeout=0):  # ignora comandos antigos na primeira execução
+            offset = upd["update_id"] + 1
     while True:
         started = datetime.now()
         run_cycle()
         offset = poll_commands(offset, started + timedelta(minutes=config.CHECK_INTERVAL_MIN))
+        if offset is not None:
+            paper.set_meta("telegram_offset", str(offset))
 
 
 if __name__ == "__main__":

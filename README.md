@@ -32,7 +32,7 @@ Os alertas de análise, gatilho e paper trade vêm com um botão **📲 Abrir na
 ## Instalação
 
 ```bash
-git clone https://github.com/<seu-usuario>/crypto_alerts.git ~/crypto_alerts
+git clone https://github.com/joaofelipeiaa/crypto_alerts.git ~/crypto_alerts
 cd ~/crypto_alerts
 python3 -m venv .venv          # ou: uv venv .venv
 .venv/bin/pip install -r requirements.txt   # ou: uv pip install --python .venv/bin/python -r requirements.txt
