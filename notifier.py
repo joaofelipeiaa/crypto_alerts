@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import config
+from assets import is_b3
 
 TZ = ZoneInfo(config.TIMEZONE)
 
@@ -42,6 +43,8 @@ def _coinbase_slug(base: str) -> str | None:
 
 
 def trade_url(symbol: str) -> str | None:
+    if is_b3(symbol):
+        return f"https://www.tradingview.com/symbols/BMFBOVESPA-{symbol.upper()}/"
     if "/" not in symbol:
         return None
     base, quote = symbol.upper().split("/", 1)
@@ -58,7 +61,10 @@ def trade_button(symbol: str) -> dict | None:
     url = trade_url(symbol)
     if not url:
         return None
-    label = f"📲 Abrir {symbol} na {config.EXCHANGE.capitalize()}"
+    if is_b3(symbol):
+        label = f"📈 Ver {symbol} no TradingView"
+    else:
+        label = f"📲 Abrir {symbol} na {config.EXCHANGE.capitalize()}"
     return {"inline_keyboard": [[{"text": label, "url": url}]]}
 
 
@@ -140,7 +146,7 @@ def format_decision(symbol: str, price: float, decision: dict, candidate: dict |
     dex_tag = "  ·  ⚠️ DEX" if dex else ""
     lines = [
         f"{icon} <b>{decision['acao']} {esc(symbol)}</b>  ·  confiança <b>{esc(decision['confianca'])}</b>{dex_tag}",
-        f"Preço: <code>{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}  ·  🕒 {fmt_time()}",
+        f"Preço: <code>{'R$ ' if is_b3(symbol) else ''}{fmt_price(price)}</code>  ·  {esc(config.TIMEFRAME)}  ·  🕒 {fmt_time()}",
         f"Viés: <b>{bias_label(decision.get('vies', 0))}</b>",
         "",
         rich(decision["resumo"]),

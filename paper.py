@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import config
+from assets import is_b3
 from profiles import DEFAULT_PROFILE, PROFILES
 
 SCHEMA = """
@@ -82,7 +83,7 @@ MIGRATIONS = {
         "eval_24h": "INTEGER DEFAULT 0",  # 1 = já conferido (mesmo que sem dado)
         "eval_72h": "INTEGER DEFAULT 0",
     },
-    "trades": {"perfil": "TEXT"},
+    "trades": {"perfil": "TEXT", "fx": "REAL DEFAULT 1"},
     "triggers": {"origin": "TEXT DEFAULT 'ia'"},  # ia (níveis da análise) | auto (faixa calculada)
 }
 
@@ -172,7 +173,9 @@ def get_dex(symbol: str) -> dict | None:
 
 
 def fee_pct(symbol: str) -> float:
-    """Taxa por lado: tokens de DEX custam bem mais (taxa do app + slippage)."""
+    """Taxa por lado: tokens de DEX custam bem mais (taxa do app + slippage); B3 quase nada."""
+    if is_b3(symbol):
+        return config.B3_FEE_PCT
     return config.DEX_FEE_PCT if get_dex(symbol) else config.PAPER_FEE_PCT
 
 
@@ -378,11 +381,13 @@ def open_position(symbol: str) -> dict | None:
     return dict(row) if row else None
 
 
-def open_trade(symbol: str, price: float, stop: float, alvo: float) -> dict:
-    qty = config.PAPER_TRADE_USD / price
+def open_trade(symbol: str, price: float, stop: float, alvo: float, fx: float = 1.0) -> dict:
+    """fx: unidades da moeda do ativo por dólar (R$ por US$ na B3), para o resultado sair em USD."""
+    qty = config.PAPER_TRADE_USD * fx / price
     with conn() as c:
-        c.execute("INSERT INTO trades (symbol, opened_at, entry, qty, stop_loss, alvo, perfil) VALUES (?,?,?,?,?,?,?)",
-                  (symbol, _now(), price, qty, stop or None, alvo or None, get_profile()))
+        c.execute("INSERT INTO trades (symbol, opened_at, entry, qty, stop_loss, alvo, perfil, fx) "
+                  "VALUES (?,?,?,?,?,?,?,?)",
+                  (symbol, _now(), price, qty, stop or None, alvo or None, get_profile(), fx))
     return open_position(symbol)
 
 
@@ -390,8 +395,8 @@ def close_trade(trade: dict, price: float, reason: str) -> dict:
     fee = fee_pct(trade["symbol"]) / 100
     cost = trade["entry"] * trade["qty"] * (1 + fee)
     proceeds = price * trade["qty"] * (1 - fee)
-    pnl = proceeds - cost
-    pnl_pct = pnl / cost * 100
+    pnl_pct = (proceeds - cost) / cost * 100
+    pnl = (proceeds - cost) / (trade.get("fx") or 1.0)
     with conn() as c:
         c.execute("UPDATE trades SET closed_at=?, exit=?, exit_reason=?, pnl_usd=?, pnl_pct=? WHERE id=?",
                   (_now(), price, reason, pnl, pnl_pct, trade["id"]))

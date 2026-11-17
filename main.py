@@ -5,9 +5,11 @@ from datetime import datetime, timedelta
 
 import ccxt
 import pandas as pd
+import requests
 
 import agent
 import config
+from assets import is_b3
 import market
 import notifier
 import paper
@@ -99,10 +101,15 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
     fee_rt = 2 * paper.fee_pct(symbol)
     min_target_pct = round(config.MIN_TARGET_FEE_MULT * fee_rt, 2)
     snap["custos_operacao"] = {"taxa_ida_e_volta_pct": fee_rt, "alvo_minimo_pct": min_target_pct}
+    if is_b3(symbol):
+        snap["mercado_brasil"] = market.b3_context() or "indisponível"
+        sentiment = "não se aplica (ativo da B3): veja dados_tecnicos.mercado_brasil"
+    else:
+        sentiment = market.fear_greed()
     holders = paper.holders(symbol)
     carteira = [{"nome": h["name"], "preco_medio": h["avg_price"],
                  "resultado_atual_pct": round((price / h["avg_price"] - 1) * 100, 2)} for h in holders]
-    decision = agent.analyze(symbol, config.TIMEFRAME, snap, market.fear_greed(), candidate, position, perfil,
+    decision = agent.analyze(symbol, config.TIMEFRAME, snap, sentiment, candidate, position, perfil,
                              historico=history_for_ai(symbol, price), carteira=carteira,
                              source=source)
     if not decision:
@@ -145,7 +152,13 @@ def evaluate(symbol: str, df: pd.DataFrame, candidate: dict | None, source: str)
                       buttons=notifier.trade_button(symbol))
 
     if actionable and decision["acao"] == "COMPRA" and not position:
-        paper.open_trade(symbol, price, decision["stop_loss"], decision["alvo"])
+        fx = 1.0
+        if is_b3(symbol):
+            try:
+                fx = market.usd_brl()
+            except Exception as e:  # noqa: BLE001
+                log.warning("Sem cotação do dólar (%s); simulação de %s em R$ 1:1", e, symbol)
+        paper.open_trade(symbol, price, decision["stop_loss"], decision["alvo"], fx)
     elif actionable and decision["acao"] == "VENDA" and position:
         closed = paper.close_trade(position, price, "sinal de venda")
         notifier.send(f"📤 Paper trade de {esc(symbol)} encerrado pelo sinal de venda: "
@@ -233,7 +246,11 @@ def check_trigger(symbol: str, df: pd.DataFrame) -> dict | None:
 
 
 def run_symbol(symbol: str) -> None:
+    if is_b3(symbol) and not market.b3_session_open():
+        return  # pregão fechado: nada se move, e não gasta chamadas
     df = market.add_indicators(market.fetch_candles(symbol))
+    if is_b3(symbol) and market.b3_stale(df):
+        return  # feriado ou dados parados
     check_positions(symbol, df)
     ensure_auto_trigger(symbol, df)
 
@@ -299,6 +316,8 @@ def run_cycle() -> None:
             run_symbol(symbol)
         except ccxt.BaseError as e:
             log.warning("%s: erro na corretora: %s", symbol, e)
+        except (requests.RequestException, ValueError) as e:
+            log.warning("%s: erro ao buscar dados: %s", symbol, e)
         except Exception:
             log.exception("%s: erro inesperado", symbol)
     try:
@@ -315,7 +334,7 @@ HELP = (
     "/desempenho — resultado do paper trading\n"
     "/placar — o que o preço fez depois das análises da IA\n"
     "/gatilhos — preços que disparam nova análise\n"
-    "/carteira — suas moedas (o VENDA só é avisado para quem tem a moeda)\n"
+    "/carteira — seus ativos (o VENDA só é avisado para quem tem o ativo)\n"
     "/carteira ZCAT 0.0185 — registra que você tem ZCAT, com preço médio 0.0185\n"
     "/carteira remover ZCAT — tira da sua carteira\n"
     "/perfil — perfil de risco atual\n"
@@ -323,6 +342,7 @@ HELP = (
     "🔒 /analise BTC — análise da IA agora (não abre operação)\n"
     "/moedas — ativos monitorados\n"
     "🔒 /adicionar XRP DOGE — passa a monitorar (pode mais de uma)\n"
+    "🔒 /adicionar PETR4 BOVA11 — ações, FIIs e ETFs da B3 (só no horário do pregão)\n"
     "🔒 /remover XRP — para de monitorar\n"
     "/id — mostra o ID do chat e o seu\n\n🔒 = só administradores"
 )
@@ -333,6 +353,8 @@ MAX_SYMBOLS = 30  # limite para não estourar o rate limit da corretora
 def resolve_symbol(arg: str) -> str:
     """'btc' -> 'BTC/USD' (ou o par já monitorado com essa moeda, ex.: BTC/USDC)."""
     arg = arg.upper().replace("-", "/")
+    if is_b3(arg.removesuffix(".SA")):
+        return arg.removesuffix(".SA")
     if "/" in arg:
         return arg
     for s in paper.get_watchlist():
@@ -345,7 +367,7 @@ def cmd_add(args: list[str]) -> None:
     if not args:
         notifier.send("Uso: /adicionar XRP  (ou vários: /adicionar XRP DOGE ADA)")
         return
-    added, existing, invalid, dex_lines = [], [], [], []
+    added, existing, invalid, invalid_b3, dex_lines = [], [], [], [], []
     for arg in args:
         symbol = resolve_symbol(arg)
         if symbol in paper.get_watchlist():
@@ -357,6 +379,9 @@ def cmd_add(args: list[str]) -> None:
         if market.symbol_exists(symbol):
             paper.add_symbol(symbol)
             added.append(symbol)
+            continue
+        if is_b3(symbol):
+            invalid_b3.append(symbol)
             continue
         if not (config.DEX_ENABLED and symbol.endswith("/USD")):
             invalid.append(symbol)
@@ -389,6 +414,8 @@ def cmd_add(args: list[str]) -> None:
     if invalid:
         lines.append(f"❌ Não encontrado na {esc(config.EXCHANGE)}: " + esc(", ".join(invalid))
                      + "\nConfira o código da moeda ou tente outro par, ex.: /adicionar XRP/USDC")
+    if invalid_b3:
+        lines.append("❌ Não encontrado na B3: " + esc(", ".join(invalid_b3)) + "\nConfira o código, ex.: PETR4, BOVA11")
     if lines:
         notifier.send("\n".join(lines))
 

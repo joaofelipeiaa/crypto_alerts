@@ -1,6 +1,7 @@
-# Crypto Alerts: monitor de criptomoedas com IA e alertas no Telegram
+# Crypto Alerts: monitor de criptomoedas e ações da B3 com IA e alertas no Telegram
 
-Monitora ativos na Coinbase (ou qualquer corretora suportada pelo [`ccxt`](https://github.com/ccxt/ccxt)),
+Monitora criptomoedas na Coinbase (ou qualquer corretora suportada pelo [`ccxt`](https://github.com/ccxt/ccxt))
+e ações, FIIs e ETFs da B3,
 filtra sinais por indicadores técnicos, pede para uma IA (OpenAI) validar cada sinal (gráfico +
 notícias + sentimento) e envia alertas de **compra/venda** no Telegram. Cada alerta vira uma operação
 **simulada** (paper trading) para você medir o desempenho real antes de arriscar dinheiro.
@@ -143,6 +144,18 @@ compra por uma DEX. Para esses, o `/adicionar` busca o token no [GeckoTerminal](
 - os alertas vêm marcados com ⚠️ DEX e a IA recebe volume, liquidez e valor de mercado para pesar o risco;
 - o bot mostra o endereço do contrato ao adicionar: confira no app que é o mesmo token.
 
+## Ações, FIIs e ETFs da B3
+
+`/adicionar PETR4 VALE3 BOVA11 IVVB11` monitora ativos da B3 junto com as criptos. Os dados vêm da API de
+gráficos do Yahoo Finance (gratuita, sem cadastro, com ~15 min de atraso). Diferenças em relação a cripto:
+
+- só analisa no horário do pregão (10h às 17h, dias úteis); à noite, fim de semana e feriado fica parado;
+- no lugar do Fear & Greed, a IA recebe Ibovespa e dólar, e pesa balanços, dividendos e notícias da empresa;
+- o paper trading usa `B3_FEE_PCT` (0,05% por lado: corretagem zero + emolumentos) e converte o resultado para
+  dólar, para somar com as criptos no `/desempenho`;
+- o botão do alerta abre o gráfico no TradingView (compre pela sua corretora);
+- a abertura do pregão pode vir com salto (gap) que passa por cima do stop.
+
 ## Usar em um grupo
 
 1. Crie o grupo no Telegram e adicione o bot como membro.
@@ -161,7 +174,7 @@ Todas as opções ficam no `.env` (veja os comentários em [`.env.example`](.env
 timeframe, intervalo, confiança mínima, cooldown, valor por operação simulada, modelo da IA etc.
 
 ## Custos
-- Dados da Coinbase (públicos), Telegram e Fear & Greed: grátis.
+- Dados da Coinbase (públicos), da B3 (Yahoo Finance), Telegram e Fear & Greed: grátis.
 - IA: paga por análise, e só roda quando há sinal candidato ou gatilho. A busca de notícias na web é a
   parte mais cara: ela roda no máximo a cada `NEWS_CACHE_HOURS` (6h) por moeda, e nas outras análises a IA
   reaproveita as notícias já encontradas (cerca de 1/4 dos tokens). `MAX_AI_CALLS_DAY` (40) é o teto de
@@ -177,7 +190,8 @@ timeframe, intervalo, confiança mínima, cooldown, valor por operação simulad
 | Arquivo | Função |
 |---|---|
 | `main.py` | loop principal e comandos do Telegram |
-| `market.py` | velas (ccxt), indicadores, Fear & Greed |
+| `market.py` | velas (ccxt, GeckoTerminal, Yahoo/B3), indicadores, Fear & Greed, Ibovespa e dólar |
+| `assets.py` | identifica se o ativo é cripto ou da B3 |
 | `triage.py` | regras que geram o sinal candidato |
 | `agent.py` | agente de IA (OpenAI Responses API + busca na web) |
 | `paper.py` | SQLite: sinais, placar, gatilhos, perfil e paper trading |

@@ -1,6 +1,8 @@
-"""Dados de mercado (via ccxt) e indicadores técnicos."""
+"""Dados de mercado (cripto via ccxt/GeckoTerminal, B3 via Yahoo Finance) e indicadores técnicos."""
 import logging
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import ccxt
 import pandas as pd
@@ -8,6 +10,7 @@ import requests
 
 import config
 import paper
+from assets import is_b3
 
 log = logging.getLogger(__name__)
 
@@ -107,10 +110,89 @@ def _dex_candles(dex: dict, timeframe: str, limit: int) -> pd.DataFrame:
     return df.tail(limit).reset_index(drop=True)
 
 
-# ---------- dados de mercado (corretora ou DEX) ----------
+# ---------- B3: ações, FIIs e ETFs (API de gráficos do Yahoo, gratuita, ~15 min de atraso) ----------
+
+YF_API = "https://query1.finance.yahoo.com/v8/finance/chart/"
+YF_DELAY = timedelta(minutes=15)
+B3_TZ = ZoneInfo("America/Sao_Paulo")
+# timeframe -> (intervalo do Yahoo, quantas velas juntar, período pedido)
+_YF_PLAN = {"5m": ("5m", 1, "30d"), "15m": ("15m", 1, "60d"), "30m": ("30m", 1, "60d"),
+            "1h": ("60m", 1, "200d"), "2h": ("60m", 2, "400d"), "6h": ("60m", 6, "700d"),
+            "1d": ("1d", 1, "2y")}
+
+
+def _yf(ticker: str, interval: str, rng: str) -> tuple[pd.DataFrame, dict]:
+    r = requests.get(YF_API + ticker, params={"interval": interval, "range": rng},
+                     headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+    chart = r.json().get("chart") or {}
+    if not chart.get("result"):
+        raise ValueError(f"Yahoo sem dados para {ticker}: {chart.get('error')}")
+    res = chart["result"][0]
+    q = res.get("indicators", {}).get("quote", [{}])[0]
+    df = pd.DataFrame({"ts": pd.to_datetime(res.get("timestamp") or [], unit="s", utc=True),
+                       **{k: q.get(k, []) for k in ("open", "high", "low", "close", "volume")}})
+    df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+    df["volume"] = df["volume"].fillna(0)
+    return df, res["meta"]
+
+
+def _b3_candles(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+    interval, factor, rng = _YF_PLAN[timeframe]
+    df, _ = _yf(symbol + ".SA", interval, rng)
+    if factor > 1:  # junta velas de 1h por pregão (10h, 12h, 14h, 16h para 2h)
+        local = df["ts"].dt.tz_convert(B3_TZ)
+        key = local.dt.normalize() + pd.to_timedelta(((local.dt.hour - 10) // factor) * factor + 10, unit="h")
+        df = df.groupby(key).agg(ts=("ts", "first"), open=("open", "first"), high=("high", "max"),
+                                 low=("low", "min"), close=("close", "last"),
+                                 volume=("volume", "sum")).reset_index(drop=True)
+    # só velas fechadas (os dados chegam com ~15 min de atraso)
+    span = pd.Timedelta(seconds=_exchange.parse_timeframe(timeframe))
+    now = pd.Timestamp.now(tz="UTC") - YF_DELAY
+    df = df[df["ts"] + span <= now]
+    return df.tail(limit).reset_index(drop=True)
+
+
+def b3_session_open() -> bool:
+    """Pregão da B3 (10h às 17h, com folga para o atraso dos dados). Feriados: ver b3_stale."""
+    now = datetime.now(B3_TZ)
+    return now.weekday() < 5 and (10, 15) <= (now.hour, now.minute) <= (17, 30)
+
+
+def b3_stale(df: pd.DataFrame) -> bool:
+    """Sem vela nova há horas em horário de pregão: feriado ou dados parados."""
+    return df.empty or pd.Timestamp.now(tz="UTC") - df.iloc[-1]["ts"] > pd.Timedelta(hours=3)
+
+
+def usd_brl() -> float:
+    return float(_yf("USDBRL=X", "1d", "5d")[1]["regularMarketPrice"])
+
+
+def b3_context() -> dict | None:
+    """Ibovespa e dólar: o "sentimento" do mercado brasileiro para a IA."""
+    try:
+        ibov, _ = _yf("^BVSP", "1d", "6mo")
+        fx, fx_meta = _yf("USDBRL=X", "1d", "1mo")
+    except Exception as e:  # noqa: BLE001
+        log.warning("Sem contexto do mercado brasileiro: %s", e)
+        return None
+    c = ibov["close"]
+    fx_now = float(fx_meta["regularMarketPrice"])
+    return {
+        "ibovespa": {"pontos": round(float(c.iloc[-1])), "variacao_dia_pct": round((c.iloc[-1] / c.iloc[-2] - 1) * 100, 2),
+                     "variacao_5_pregoes_pct": round((c.iloc[-1] / c.iloc[-6] - 1) * 100, 2),
+                     "acima_media_50_dias": bool(c.iloc[-1] > c.tail(50).mean())},
+        "dolar_brl": {"cotacao": round(fx_now, 4),
+                      "variacao_5_dias_pct": round((fx_now / float(fx["close"].iloc[-6]) - 1) * 100, 2)},
+        "observacao": "dados da B3 com ~15 min de atraso; pregão das 10h às 17h",
+    }
+
+
+# ---------- dados de mercado (corretora, DEX ou B3) ----------
 
 def fetch_candles(symbol: str, timeframe: str = config.TIMEFRAME, limit: int = 250) -> pd.DataFrame:
     """Busca velas e descarta a última (ainda aberta), usando só velas fechadas."""
+    if is_b3(symbol):
+        return _b3_candles(symbol, timeframe, limit)
     dex = paper.get_dex(symbol)
     if dex:
         return _dex_candles(dex, timeframe, limit)
@@ -121,7 +203,13 @@ def fetch_candles(symbol: str, timeframe: str = config.TIMEFRAME, limit: int = 2
 
 
 def symbol_exists(symbol: str) -> bool:
-    """Confere se o par existe e está ativo na corretora."""
+    """Confere se o par existe e está ativo na corretora (ou se o ticker existe na B3)."""
+    if is_b3(symbol):
+        try:
+            df, meta = _yf(symbol + ".SA", "1d", "1mo")
+        except Exception:  # noqa: BLE001
+            return False
+        return not df.empty and meta.get("currency") == "BRL"
     markets = _exchange.load_markets()  # o ccxt guarda em cache após a primeira chamada
     m = markets.get(symbol)
     return bool(m) and m.get("active") is not False
@@ -129,6 +217,12 @@ def symbol_exists(symbol: str) -> bool:
 
 def price_at(symbol: str, ts_ms: int) -> float | None:
     """Preço (abertura da vela de 1h) no momento indicado. None se a corretora não tiver o dado."""
+    if is_b3(symbol):  # pregão fechado no horário pedido: vale o último preço antes dele
+        df, _ = _yf(symbol + ".SA", "60m", "3mo")
+        before = df[df["ts"] <= pd.Timestamp(ts_ms, unit="ms", tz="UTC")]
+        if before.empty or pd.Timestamp(ts_ms, unit="ms", tz="UTC") - before.iloc[-1]["ts"] > pd.Timedelta(days=5):
+            return None
+        return float(before.iloc[-1]["close"])
     dex = paper.get_dex(symbol)
     if dex:
         raw = _gt(f"/networks/{dex['network']}/pools/{dex['pool']}/ohlcv/hour", aggregate=1, limit=3,
@@ -143,6 +237,8 @@ def price_at(symbol: str, ts_ms: int) -> float | None:
 
 
 def last_price(symbol: str) -> float:
+    if is_b3(symbol):
+        return float(_yf(symbol + ".SA", "1d", "5d")[1]["regularMarketPrice"])
     dex = paper.get_dex(symbol)
     if dex:
         data = _gt(f"/networks/{dex['network']}/tokens/{dex['token']}")["data"]["attributes"]
